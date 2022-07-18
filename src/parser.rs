@@ -53,6 +53,7 @@ fn atom() -> impl MParser<Node> {
     }
     .map_with_span(Spanned)
 }
+
 fn list_of<O>(base: impl MParser<O>) -> impl MParser<Vec<O>> {
     base.separated_by(just(Token::Comma))
         .delimited_by(just(Token::OpenRound), just(Token::CloseRound))
@@ -68,7 +69,7 @@ fn fn_def(expression: impl MParser<Node>) -> impl MParser<Node> {
         .ignore_then(ident().or_not())
         .then(list_of(ident()))
         .then(block)
-        .map(|((name, args), body)| RawNode::FnDef(FnDef { name, body }))
+        .map(|((name, _args), body)| RawNode::FnDef(FnDef { name, body }))
         .map_with_span(Spanned)
 }
 
@@ -94,6 +95,10 @@ pub fn parse(source: &str, interner: &mut Rodeo) -> Result<Vec<Node>, Vec<Simple
     let mut lexer = Lexer::new(source);
     let tokens = lexer.collect(interner).unwrap();
 
+    parse_tokens(tokens)
+}
+
+pub fn parse_tokens(tokens: Vec<(Token, Span)>) -> Result<Vec<Node>, Vec<Simple<Token>>> {
     let stream = Stream::from_iter(0..0, tokens.into_iter());
     parser().parse(stream)
 }

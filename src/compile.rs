@@ -1,32 +1,31 @@
-use std::collections::HashMap;
-
 use lasso::Spur;
 
 use crate::parser::{Call, FnDef, Node, RawNode};
 
-#[derive(Debug, PartialEq)]
-enum HLInstruction {
+#[derive(Clone, Debug, PartialEq)]
+pub enum HLInstruction {
     PushString(Spur),
     /// arg count
     Call(u32),
     LoadLocal(Spur),
+    Return,
 }
 
 #[derive(Debug, PartialEq)]
-struct Function {
-    name: Option<Spur>,
-    argc: usize,
-    body: Vec<HLInstruction>,
+pub struct Function {
+    pub name: Option<Spur>,
+    pub argc: usize,
+    pub body: Vec<HLInstruction>,
 }
 
 #[derive(Debug, Default, PartialEq)]
-struct Builder {
+pub struct Builder {
     current: Option<Function>,
-    functions: Vec<Function>,
+    pub functions: Vec<Function>,
 }
 
 #[derive(Debug, PartialEq)]
-enum CompileError {
+pub enum CompileError {
     InvalidTopLevel,
     NestedFn,
 }
@@ -44,7 +43,7 @@ impl Function {
 type BuildResult<T = (), E = CompileError> = Result<T, E>;
 
 impl Builder {
-    fn read_top_nodes(&mut self, nodes: &[Node]) -> BuildResult {
+    pub fn read_top_nodes(&mut self, nodes: &[Node]) -> BuildResult {
         for item in nodes {
             self.read_top_node(item)?;
         }
