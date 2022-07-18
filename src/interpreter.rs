@@ -17,7 +17,7 @@ use crate::{
     parser::parse_tokens,
 };
 
-use self::builtin::{BuiltinFunction, ErasedBuiltin};
+use self::builtin::{BuiltinAdapter, BuiltinFunction, ErasedBuiltin};
 
 pub trait Ports {
     type Stdin: 'static;
@@ -54,8 +54,7 @@ pub enum ExecuteError {}
 
 type ExecuteResult<T = (), E = ExecuteError> = Result<T, E>;
 
-impl<P: Ports> Interpreter<P>
-{
+impl<P: Ports> Interpreter<P> {
     pub fn new() -> Self {
         Interpreter {
             insts: Vec::new(),
@@ -100,9 +99,7 @@ impl<P: Ports> Interpreter<P>
         let argc = f.arg_count() as u32;
         let key = self.interner.get_or_intern(name);
 
-        // This is really bad but the best I could come up with.
-        self.builtins
-            .push(Rc::new(Box::new(f) as Box<dyn BuiltinFunction<P, I>>));
+        self.builtins.push(Rc::new(BuiltinAdapter::new(f)));
 
         let id = self.builtins.len() - 1;
         self.globals.insert(key, Value::Builtin(id, argc));

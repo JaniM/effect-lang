@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use crate::lower::Value;
 
 use super::{Interpreter, Ports};
@@ -53,20 +55,40 @@ where
     }
 }
 
+pub struct BuiltinAdapter<F, P, I>
+{
+    builtin: F,
+    _phantom: PhantomData<fn() -> (P, I)>,
+}
+
+impl<F, P, I> BuiltinAdapter<F, P, I>
+where
+    F: BuiltinFunction<P, I>,
+    P: Ports,
+{
+    pub fn new(f: F) -> Self {
+        Self {
+            builtin: f,
+            _phantom: PhantomData,
+        }
+    }
+}
+
 pub trait ErasedBuiltin<P: Ports> {
     fn call(&self, interpreter: &mut Interpreter<P>) -> Option<()>;
     fn arg_count(&self) -> usize;
 }
 
-impl<I, P> ErasedBuiltin<P> for Box<dyn BuiltinFunction<P, I>>
+impl<F, P, I> ErasedBuiltin<P> for BuiltinAdapter<F, P, I>
 where
+    F: BuiltinFunction<P, I>,
     P: Ports,
 {
     fn call(&self, interpreter: &mut Interpreter<P>) -> Option<()> {
-        BuiltinFunction::call(&**self, interpreter)
+        BuiltinFunction::call(&self.builtin, interpreter)
     }
 
     fn arg_count(&self) -> usize {
-        BuiltinFunction::arg_count(&**self)
+        BuiltinFunction::arg_count(&self.builtin)
     }
 }
