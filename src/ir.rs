@@ -400,7 +400,9 @@ mod test {
             func.write(&interner, &mut std::io::stderr()).unwrap();
         }
 
-        let builtins = Builtins::load(&mut interner, |l| load_standard_builtins::<StandardPorts>(l));
+        let builtins = Builtins::load(&mut interner, |l| {
+            load_standard_builtins::<StandardPorts>(l)
+        });
 
         let mut typecheck = Typechecker::new(&mut interner, &builtins);
         typecheck.infer(&mut ir).unwrap();
