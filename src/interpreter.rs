@@ -1,5 +1,5 @@
-mod builtin;
-mod standard;
+pub mod builtin;
+pub mod standard;
 mod test;
 
 use core::panic;
@@ -17,7 +17,7 @@ use crate::{
     parser::parse_tokens,
 };
 
-use self::builtin::{BuiltinAdapter, BuiltinFunction, ErasedBuiltin};
+use self::builtin::{BuiltinAdapter, BuiltinFunction, ErasedBuiltin, LoadBuiltin};
 
 pub trait Ports {
     type Stdin: 'static;
@@ -90,21 +90,6 @@ impl<P: Ports> Interpreter<P> {
         Ok(())
     }
 
-    pub fn load_builtin<F, I>(&mut self, name: &str, f: F)
-    where
-        F: BuiltinFunction<P, I> + 'static,
-        P: 'static,
-        I: 'static,
-    {
-        let argc = f.arg_count() as u32;
-        let key = self.interner.get_or_intern(name);
-
-        self.builtins.push(Rc::new(BuiltinAdapter::new(f)));
-
-        let id = self.builtins.len() - 1;
-        self.globals.insert(key, Value::Builtin(id, argc));
-    }
-
     fn begin(&mut self) {
         // It is assumed `main` exists.
         self.ip = self.find_entry_point().unwrap();
@@ -171,5 +156,22 @@ impl<P: Ports> Interpreter<P> {
             Value::Function(_, _) => todo!(),
             x => panic!("Calling a non-function: {:?}", x),
         }
+    }
+}
+
+impl<P: Ports> LoadBuiltin<P> for Interpreter<P> {
+    fn load_builtin<F, I>(&mut self, name: &str, f: F)
+    where
+        F: BuiltinFunction<P, I> + 'static,
+        P: 'static,
+        I: 'static,
+    {
+        let argc = f.arg_count() as u32;
+        let key = self.interner.get_or_intern(name);
+
+        self.builtins.push(Rc::new(BuiltinAdapter::new(f)));
+
+        let id = self.builtins.len() - 1;
+        self.globals.insert(key, Value::Builtin(id, argc));
     }
 }

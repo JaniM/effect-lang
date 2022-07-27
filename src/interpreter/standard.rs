@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use super::{Interpreter, Ports};
+use super::{Interpreter, Ports, builtin::LoadBuiltin};
 
 pub struct StandardPorts;
 
@@ -14,6 +14,6 @@ fn print<P: Ports>(interpreter: &mut Interpreter<P>, text: String) {
     write!(out, "{}\n", text).unwrap();
 }
 
-pub fn load_standard_builtins<P: Ports + 'static>(interpreter: &mut Interpreter<P>) {
-    interpreter.load_builtin("print", print);
+pub fn load_standard_builtins<P: Ports + 'static>(loader: &mut impl LoadBuiltin<P>) {
+    loader.load_builtin("print", print);
 }

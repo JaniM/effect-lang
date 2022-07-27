@@ -1,11 +1,12 @@
 use std::marker::PhantomData;
 
-use crate::lower::Value;
+use crate::{ir::Type, lower::Value};
 
 use super::{Interpreter, Ports};
 
 trait Extract: Sized {
     fn extract<P: Ports>(interpreter: &mut Interpreter<P>) -> Option<Self>;
+    fn extract_type() -> Type;
 }
 
 impl Extract for String {
@@ -18,11 +19,16 @@ impl Extract for String {
             }
         }
     }
+
+    fn extract_type() -> Type {
+        Type::String
+    }
 }
 
 pub trait BuiltinFunction<P: Ports, I> {
     fn call(&self, interpreter: &mut Interpreter<P>) -> Option<()>;
     fn arg_count(&self) -> usize;
+    fn extract_type(&self) -> Type;
 }
 
 impl<F, P> BuiltinFunction<P, ()> for F
@@ -36,6 +42,13 @@ where
 
     fn arg_count(&self) -> usize {
         0
+    }
+
+    fn extract_type(&self) -> Type {
+        Type::Function {
+            inputs: vec![],
+            output: Box::new(Type::Unit),
+        }
     }
 }
 
@@ -53,10 +66,16 @@ where
     fn arg_count(&self) -> usize {
         1
     }
+
+    fn extract_type(&self) -> Type {
+        Type::Function {
+            inputs: vec![A::extract_type()],
+            output: Box::new(Type::Unit),
+        }
+    }
 }
 
-pub struct BuiltinAdapter<F, P, I>
-{
+pub struct BuiltinAdapter<F, P, I> {
     builtin: F,
     _phantom: PhantomData<fn() -> (P, I)>,
 }
@@ -77,6 +96,7 @@ where
 pub trait ErasedBuiltin<P: Ports> {
     fn call(&self, interpreter: &mut Interpreter<P>) -> Option<()>;
     fn arg_count(&self) -> usize;
+    fn extract_type(&self) -> Type;
 }
 
 impl<F, P, I> ErasedBuiltin<P> for BuiltinAdapter<F, P, I>
@@ -91,4 +111,17 @@ where
     fn arg_count(&self) -> usize {
         BuiltinFunction::arg_count(&self.builtin)
     }
+
+    fn extract_type(&self) -> Type {
+        BuiltinFunction::extract_type(&self.builtin)
+    }
 }
+
+pub trait LoadBuiltin<P: Ports> {
+    fn load_builtin<F, I>(&mut self, name: &str, f: F)
+    where
+        F: BuiltinFunction<P, I> + 'static,
+        P: 'static,
+        I: 'static;
+}
+
