@@ -26,7 +26,7 @@ fn main() {
 
     let mut ir = builder.to_ir();
 
-    println!("{}", ir.to_string(&IRWriteCtx::new(&interner, source)));
+    ir.write(&IRWriteCtx::new(&interner, source));
 
     let builtins = Builtins::load(&mut interner, |l| {
         load_standard_builtins::<StandardPorts>(l)
@@ -37,5 +37,5 @@ fn main() {
     let mut typecheck = Typechecker::new(&mut interner, &builtins);
     typecheck.infer(&mut ir).unwrap();
 
-    println!("{}", ir.to_string(&IRWriteCtx::new(&interner, source)));
+    ir.write(&IRWriteCtx::new(&interner, source));
 }

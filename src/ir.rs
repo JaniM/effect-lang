@@ -15,7 +15,7 @@
 //     %2 = call %0 (%1) : unit
 
 mod name_resolve;
-use colored::{Colorize, ColoredString};
+use colored::{ColoredString, Colorize};
 pub use name_resolve::resolve_names;
 
 macro_rules! inc {
@@ -26,7 +26,7 @@ macro_rules! inc {
     }};
 }
 
-use std::{collections::HashMap, fmt::Write as _, io::Write};
+use std::collections::HashMap;
 
 use lasso::{Rodeo, Spur};
 
@@ -66,41 +66,40 @@ pub enum Type {
 }
 
 impl Type {
-    fn write(&self, ctx: &IRWriteCtx, f: &mut impl Write) -> std::io::Result<usize> {
-        let len = match self {
+    fn write(&self, ctx: &IRWriteCtx) -> usize {
+        match self {
             Type::Unknown(id) => {
-                write!(f, "?{}", id)?;
+                print!("?{}", id);
                 (*id as f32).log10() as usize + 2
             }
             Type::Name(key) => {
                 let n = ctx.interner.resolve(key);
-                write!(f, "{} (unresolved)", n)?;
+                print!("{} (unresolved)", n);
                 n.len() + " (unresolved)".len()
             }
             Type::Function { inputs, output } => {
                 let mut len = 1;
-                write!(f, "(")?;
+                print!("(");
                 for (i, input) in inputs.iter().enumerate() {
-                    len += input.write(ctx, f)?;
+                    len += input.write(ctx);
                     if i != inputs.len() - 1 {
-                        write!(f, ", ")?;
+                        print!(", ");
                         len += 2;
                     }
                 }
-                write!(f, ") -> ")?;
+                print!(") -> ");
                 len += ") -> ".len();
-                len + output.write(ctx, f)?
+                len + output.write(ctx)
             }
             Type::String => {
-                write!(f, "string")?;
+                print!("string");
                 6
             }
             Type::Unit => {
-                write!(f, "unit")?;
+                print!("unit");
                 4
             }
-        };
-        Ok(len)
+        }
     }
 }
 
@@ -110,15 +109,14 @@ pub enum Literal {
 }
 
 impl Literal {
-    fn write(&self, ctx: &IRWriteCtx, f: &mut impl Write) -> std::io::Result<usize> {
-        let len = match self {
+    fn write(&self, ctx: &IRWriteCtx) -> usize {
+        match self {
             Literal::String(key) => {
                 let n = ctx.interner.resolve(key);
-                write!(f, "{}", format!(r#""{}""#, n).yellow())?;
+                print!("{}", format!(r#""{}""#, n).yellow());
                 n.len() + 2
             }
-        };
-        Ok(len)
+        }
     }
 }
 
@@ -131,36 +129,35 @@ pub enum NodeKind {
 }
 
 impl NodeKind {
-    fn write(&self, ctx: &IRWriteCtx, f: &mut impl Write) -> std::io::Result<usize> {
-        let len = match self {
+    fn write(&self, ctx: &IRWriteCtx) -> usize {
+        match self {
             NodeKind::Symbol(key) => {
                 let n = ctx.interner.resolve(key);
-                write!(f, "{} (?)", n)?;
+                print!("{} (?)", n);
                 n.len() + " (?)".len()
             }
             NodeKind::Builtin { name, .. } => {
                 let n = ctx.interner.resolve(name);
-                write!(f, "@{}", n)?;
+                print!("@{}", n);
                 n.len() + 1
             }
-            NodeKind::Literal(lit) => lit.write(ctx, f)?,
+            NodeKind::Literal(lit) => lit.write(ctx),
             NodeKind::Call(fn_var, args) => {
-                write!(f, "call {} (", format_var(*fn_var)).unwrap();
+                print!("call {} (", format_var(*fn_var));
                 let mut len = (*fn_var as f32).log10() as usize + 2 + "call  (".len();
                 for (i, arg) in args.iter().enumerate() {
-                    write!(f, "{}", format_var(*arg)).unwrap();
+                    print!("{}", format_var(*arg));
                     len += (*arg as f32).log10() as usize + 2;
                     if i != args.len() - 1 {
-                        write!(f, ", ").unwrap();
+                        print!(", ");
                         len += 2;
                     }
                 }
-                write!(f, ")").unwrap();
+                print!(")");
                 len += 1;
                 len
             }
-        };
-        Ok(len)
+        }
     }
 }
 
@@ -172,22 +169,20 @@ pub struct Node {
 }
 
 impl Node {
-    fn write(&self, ctx: &IRWriteCtx, f: &mut impl Write) -> std::io::Result<()> {
+    fn write(&self, ctx: &IRWriteCtx) {
         let ty_align = 20usize;
         let source_align = 50usize;
 
         let mut len = 0;
-        len += self.kind.write(ctx, f)?;
-        write!(f, "{}: ", " ".repeat(ty_align.saturating_sub(len)))?;
+        len += self.kind.write(ctx);
+        print!("{}: ", " ".repeat(ty_align.saturating_sub(len)));
         len = ty_align + 2;
-        len += self.ty.write(ctx, f)?;
-        write!(
-            f,
+        len += self.ty.write(ctx);
+        print!(
             "{}| {}",
             " ".repeat(source_align.saturating_sub(len)),
             &ctx.source[self.span.clone()].purple()
-        )?;
-        Ok(())
+        );
     }
 }
 
@@ -199,24 +194,22 @@ pub struct Block {
 }
 
 impl Block {
-    fn write(&self, ctx: &IRWriteCtx, f: &mut impl Write) -> std::io::Result<()> {
-        write!(f, "block {} (", self.idx)?;
+    fn write(&self, ctx: &IRWriteCtx) {
+        print!("block {} (", self.idx);
         for (i, arg) in self.inputs.iter().enumerate() {
-            write!(f, "#{} : ", i)?;
-            arg.write(ctx, f)?;
+            print!("#{} : ", i);
+            arg.write(ctx);
             if i != self.inputs.len() - 1 {
-                write!(f, ", ")?;
+                print!(", ");
             }
         }
-        write!(f, ")\n")?;
+        print!(")\n");
 
         for (i, node) in self.nodes.iter().enumerate() {
-            write!(f, "  {} = ", format_var(i))?;
-            node.write(ctx, f)?;
-            write!(f, "\n")?;
+            print!("  {} = ", format_var(i));
+            node.write(ctx);
+            print!("\n");
         }
-
-        Ok(())
     }
 }
 
@@ -228,20 +221,17 @@ pub struct Function {
 }
 
 impl Function {
-    fn write(&self, ctx: &IRWriteCtx, f: &mut impl Write) -> std::io::Result<()> {
-        write!(
-            f,
+    fn write(&self, ctx: &IRWriteCtx) {
+        print!(
             "fn {}\n",
             self.name
                 .map(|k| ctx.interner.resolve(&k))
                 .unwrap_or("<unnamed>")
-        )?;
+        );
 
         for block in self.blocks.iter() {
-            block.write(ctx, f)?;
+            block.write(ctx);
         }
-
-        Ok(())
     }
 }
 
@@ -258,17 +248,10 @@ pub struct IR {
 }
 
 impl IR {
-    pub fn write(&self, ctx: &IRWriteCtx, f: &mut impl Write) -> std::io::Result<()> {
+    pub fn write(&self, ctx: &IRWriteCtx) {
         for func in &self.functions {
-            func.write(ctx, f)?;
+            func.write(ctx);
         }
-        Ok(())
-    }
-
-    pub fn to_string(&self, ctx: &IRWriteCtx) -> String {
-        let mut s = Vec::new();
-        self.write(ctx, &mut std::io::Cursor::new(&mut s)).unwrap();
-        String::from_utf8_lossy(&s).into_owned()
     }
 }
 
@@ -482,19 +465,19 @@ mod test {
 
         let mut ir = builder.to_ir();
 
-        println!("{}", ir.to_string(&IRWriteCtx::new(&interner, source)));
+        ir.write(&IRWriteCtx::new(&interner, source));
 
         let builtins = Builtins::load(&mut interner, |l| {
             load_standard_builtins::<StandardPorts>(l)
         });
 
         resolve_names(&builtins, &mut ir).unwrap();
-        println!("{}", ir.to_string(&IRWriteCtx::new(&interner, source)));
+        ir.write(&IRWriteCtx::new(&interner, source));
 
         let mut typecheck = Typechecker::new(&mut interner, &builtins);
         typecheck.infer(&mut ir).unwrap();
 
-        println!("{}", ir.to_string(&IRWriteCtx::new(&interner, source)));
+        ir.write(&IRWriteCtx::new(&interner, source));
 
         let key = |v: &str| interner.get(v).unwrap();
 
