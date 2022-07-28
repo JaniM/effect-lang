@@ -5,7 +5,7 @@ use lasso::{Rodeo, Spur};
 
 use crate::lexer::{Lexer, Token};
 
-type Span = Range<usize>;
+pub type Span = Range<usize>;
 
 /// Parser alias
 trait MParser<T, E: chumsky::Error<Token> = Simple<Token>>:

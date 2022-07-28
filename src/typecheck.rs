@@ -5,7 +5,6 @@ use crate::ir::{Builtins, Literal, Node, NodeKind, Type, IR};
 
 pub struct Typechecker<'a> {
     interner: &'a mut Rodeo,
-    builtins: &'a Builtins,
     func_types: Vec<Type>,
 }
 
@@ -18,7 +17,6 @@ impl<'a> Typechecker<'a> {
     pub fn new(interner: &'a mut Rodeo, builtins: &'a Builtins) -> Self {
         Typechecker {
             interner,
-            builtins,
             func_types: Vec::new(),
         }
     }
@@ -41,7 +39,8 @@ impl<'a> Typechecker<'a> {
 
     fn infer_node(&mut self, prev_nodes: &[Node], node: &mut Node) -> TypeResult {
         let ty = match &node.kind {
-            NodeKind::Symbol(name) => self.infer_symbol(name)?,
+            NodeKind::Symbol(_name) => todo!(),
+            NodeKind::Builtin { .. } => None,
             NodeKind::Literal(Literal::String(_)) => Some(Type::String),
             NodeKind::Call(idx, _) => self.infer_call(prev_nodes, *idx)?,
         };
@@ -49,10 +48,6 @@ impl<'a> Typechecker<'a> {
             node.ty = ty;
         }
         Ok(())
-    }
-
-    fn infer_symbol(&mut self, name: &Spur) -> TypeResult<Option<Type>> {
-        Ok(self.builtins.builtins.get(name).map(|x| &x.ty).cloned())
     }
 
     fn infer_call(&mut self, prev_nodes: &[Node], idx: usize) -> TypeResult<Option<Type>> {

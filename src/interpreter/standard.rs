@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use super::{Interpreter, Ports, builtin::LoadBuiltin};
+use super::{builtin::LoadBuiltin, Interpreter, Ports};
 
 pub struct StandardPorts;
 
