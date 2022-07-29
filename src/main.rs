@@ -5,6 +5,7 @@ mod lexer;
 mod lower;
 mod parser;
 mod typecheck;
+mod hlir;
 
 use crate::{
     interpreter::standard::{load_standard_builtins, StandardPorts},

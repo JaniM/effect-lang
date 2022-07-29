@@ -10,6 +10,21 @@ enum RawToken {
     #[token("fn")]
     Fn,
 
+    #[token("if")]
+    If,
+
+    #[token("else")]
+    Else,
+
+    #[token("let")]
+    Let,
+
+    #[token("=")]
+    Assign,
+
+    #[token("==")]
+    Equals,
+
     #[token(";")]
     Semicolon,
 
@@ -34,6 +49,9 @@ enum RawToken {
     #[regex(r#""(\\.|[^"])*""#)]
     String,
 
+    #[regex(r#"[0-9]+"#)]
+    Number,
+
     #[error]
     #[regex(r"[ \t\n\f]+", logos::skip)]
     Error,
@@ -42,6 +60,11 @@ enum RawToken {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Token {
     Fn,
+    If,
+    Else,
+    Let,
+    Equals,
+    Assign,
     Semicolon,
     OpenCurly,
     CloseCurly,
@@ -50,6 +73,7 @@ pub enum Token {
     Comma,
     Identifier(Spur),
     String(Spur),
+    Number(i64),
 }
 
 pub struct Lexer<'source> {
@@ -81,6 +105,9 @@ impl Lexer<'_> {
 
         let token = match token {
             RawToken::Fn => Token::Fn,
+            RawToken::If => Token::If,
+            RawToken::Else => Token::Else,
+            RawToken::Let => Token::Let,
             RawToken::Semicolon => Token::Semicolon,
             RawToken::OpenCurly => Token::OpenCurly,
             RawToken::CloseCurly => Token::CloseCurly,
@@ -90,7 +117,10 @@ impl Lexer<'_> {
 
             RawToken::Identifier => Token::Identifier(intern(slice)),
             RawToken::String => Token::String(intern(&slice[1..slice.len() - 1])),
+            RawToken::Number => Token::Number(slice.parse().unwrap()),
             RawToken::Error => return Err(LexError::Unknown(self.lex.span())),
+            RawToken::Assign => Token::Assign,
+            RawToken::Equals => Token::Equals,
         };
 
         Ok(Some((token, self.lex.span())))

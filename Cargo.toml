@@ -11,3 +11,7 @@ lasso = "*"
 logos = "*"
 derive_more = "*"
 colored = "*"
+unindent = "*"
+
+[dev-dependencies]
+pretty_assertions = "*"

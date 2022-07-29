@@ -60,7 +60,7 @@ impl Builder {
     fn read_function(&mut self, def: &FnDef) -> BuildResult {
         self.begin_function(Function::new(def))?;
 
-        for item in def.body.iter() {
+        for item in def.body.0.stmts.iter() {
             self.read_expression(item)?;
         }
 
@@ -71,9 +71,13 @@ impl Builder {
     fn read_expression(&mut self, node: &Node) -> BuildResult {
         match &node.0 {
             RawNode::FnDef(_) => todo!(),
+            RawNode::If(_) => todo!(),
             RawNode::Call(call) => self.read_call(call),
             RawNode::Name(name) => self.read_name(*name),
             RawNode::String(string) => self.read_string(*string),
+            RawNode::Binop(_) => todo!(),
+            RawNode::Let(_) => todo!(),
+            RawNode::Number(_) => todo!(),
         }
     }
 

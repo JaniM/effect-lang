@@ -298,7 +298,7 @@ impl Builder {
         self.begin_function(Function::new(def))?;
         self.begin_block(Vec::new())?;
 
-        for item in def.body.iter() {
+        for item in def.body.0.stmts.iter() {
             self.read_expression(item)?;
         }
 
@@ -309,9 +309,13 @@ impl Builder {
     fn read_expression(&mut self, node: &AstNode) -> BuildResult<usize> {
         match &node.0 {
             RawNode::FnDef(_) => todo!(),
+            RawNode::If(_) => todo!(),
             RawNode::Call(call) => self.read_call(call, node.1.clone()),
             RawNode::Name(name) => self.read_name(*name, node.1.clone()),
             RawNode::String(string) => self.read_string(*string, node.1.clone()),
+            RawNode::Binop(_) => todo!(),
+            RawNode::Let(_) => todo!(),
+            RawNode::Number(_) => todo!(),
         }
     }
 
