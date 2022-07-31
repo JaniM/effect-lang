@@ -15,6 +15,7 @@
 //     %2 = call %0 (%1) : unit
 
 mod name_resolve;
+pub use crate::hlir::Type;
 use colored::{ColoredString, Colorize};
 pub use name_resolve::resolve_names;
 
@@ -53,29 +54,12 @@ fn format_var(param: usize) -> ColoredString {
     format!("%{}", param).blue()
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Type {
-    Unknown(usize),
-    Name(Spur),
-    Function {
-        inputs: Vec<Type>,
-        output: Box<Type>,
-    },
-    String,
-    Unit,
-}
-
 impl Type {
     fn write(&self, ctx: &IRWriteCtx) -> usize {
         match self {
             Type::Unknown(id) => {
                 print!("?{}", id);
                 (*id as f32).log10() as usize + 2
-            }
-            Type::Name(key) => {
-                let n = ctx.interner.resolve(key);
-                print!("{} (unresolved)", n);
-                n.len() + " (unresolved)".len()
             }
             Type::Function { inputs, output } => {
                 let mut len = 1;
@@ -99,6 +83,7 @@ impl Type {
                 print!("unit");
                 4
             }
+            _ => 0,
         }
     }
 }
@@ -401,57 +386,11 @@ impl Builder {
     }
 }
 
-pub struct BuiltinIR {
-    pub name: Spur,
-    pub ty: Type,
-    pub idx: usize,
-}
-
-pub struct Builtins {
-    pub builtins: HashMap<Spur, BuiltinIR>,
-}
-
-impl Builtins {
-    pub fn load(interner: &mut Rodeo, f: impl FnOnce(&mut BuiltinLoader)) -> Self {
-        let mut loader = BuiltinLoader {
-            interner,
-            idx: 0,
-            builtins: HashMap::new(),
-        };
-        f(&mut loader);
-        Builtins {
-            builtins: loader.builtins,
-        }
-    }
-}
-
-pub struct BuiltinLoader<'a> {
-    interner: &'a mut Rodeo,
-    idx: usize,
-    pub builtins: HashMap<Spur, BuiltinIR>,
-}
-
-impl<P: Ports> LoadBuiltin<P> for BuiltinLoader<'_> {
-    fn load_builtin<F, I>(&mut self, name: &str, f: F)
-    where
-        F: BuiltinFunction<P, I> + 'static,
-        P: 'static,
-        I: 'static,
-    {
-        let key = self.interner.get_or_intern(name);
-        let ir = BuiltinIR {
-            name: key,
-            ty: f.extract_type(),
-            idx: inc!(self.idx),
-        };
-        self.builtins.insert(key, ir);
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::{name_resolve::resolve_names, *};
     use crate::{
+        hlir::Builtins,
         interpreter::standard::{load_standard_builtins, StandardPorts},
         parser::parse,
         typecheck::Typechecker,

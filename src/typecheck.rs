@@ -1,7 +1,7 @@
-
 use lasso::{Rodeo, Spur};
 
-use crate::ir::{Builtins, Literal, Node, NodeKind, Type, IR};
+use crate::hlir::Builtins;
+use crate::ir::{Literal, Node, NodeKind, Type, IR};
 
 pub struct Typechecker<'a> {
     interner: &'a mut Rodeo,

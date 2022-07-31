@@ -1,6 +1,7 @@
 use lasso::Spur;
 
-use super::{Block, Builtins, Function, Node, NodeKind, IR};
+use super::{Block, Function, Node, NodeKind, IR};
+use crate::hlir::Builtins;
 
 pub struct IRWalker<'a> {
     ir: &'a mut IR,

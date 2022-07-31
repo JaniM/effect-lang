@@ -124,4 +124,3 @@ pub trait LoadBuiltin<P: Ports> {
         P: 'static,
         I: 'static;
 }
-

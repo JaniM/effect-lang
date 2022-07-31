@@ -2,7 +2,7 @@
 
 use std::io::Cursor;
 
-use super::{*, standard::load_standard_builtins};
+use super::{standard::load_standard_builtins, *};
 
 struct TestPorts;
 impl Ports for TestPorts {

@@ -1,17 +1,16 @@
+pub mod name_resolve;
+pub mod pretty;
+pub mod simplify;
+pub mod typecheck;
+pub mod visitor;
+
 use std::collections::HashMap;
 
-use lasso::Spur;
+use lasso::{Rodeo, Spur};
 
+use crate::inc;
 use crate::parser as ast;
 use crate::parser::BinopKind;
-
-macro_rules! inc {
-    ($x:expr) => {{
-        let v = $x;
-        $x += 1;
-        v
-    }};
-}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FileId(pub usize);
@@ -34,6 +33,7 @@ pub enum Type {
     },
     String,
     Int,
+    Bool,
     Unit,
 }
 
@@ -57,6 +57,7 @@ pub enum NodeKind {
     Let {
         name: Spur,
         value: Box<Node>,
+        expr: Box<Node>,
     },
     Binop {
         op: BinopKind,
@@ -75,6 +76,7 @@ pub enum NodeKind {
     Block(Vec<Node>),
     Literal(Literal),
     Name(Spur),
+    Builtin(Spur),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -188,12 +190,51 @@ impl HlirBuilder {
             .into_iter()
             .map(|x| self.read_node(module, x))
             .collect::<Result<_, _>>()?;
+
+        let nodes = self.fold_nodes(module, nodes)?;
+
         let node = Node {
             kind: NodeKind::Block(nodes),
-            ty: self.unknown_type(),
+            ty: Type::Unit,
             source_span: Span(module.file, span.start, span.end),
         };
+
         Ok(node)
+    }
+
+    fn fold_nodes(
+        &mut self,
+        module: &mut Module,
+        mut nodes: Vec<Node>,
+    ) -> Result<Vec<Node>, HlirBuildError> {
+        if let Some(idx) = nodes
+            .iter()
+            .position(|x| matches!(&x.kind, NodeKind::Let { .. }))
+        {
+            let scope = nodes.drain(idx + 1..).collect::<Vec<_>>();
+            let scope = self.fold_nodes(module, scope)?;
+
+            let mut expr_node = self.unit_node();
+
+            if let Some(first) = scope.first() {
+                expr_node.source_span.1 = first.source_span.1;
+            }
+
+            if let Some(last) = scope.last() {
+                expr_node.ty = last.ty.clone();
+                expr_node.source_span.0 = last.source_span.0;
+                expr_node.source_span.2 = last.source_span.2;
+            }
+
+            expr_node.kind = NodeKind::Block(scope);
+
+            let letd = nodes.last_mut().unwrap();
+            match &mut letd.kind {
+                NodeKind::Let { expr, .. } => *expr = expr_node.into(),
+                _ => unreachable!(),
+            }
+        }
+        Ok(nodes)
     }
 
     fn read_node(
@@ -231,6 +272,7 @@ impl HlirBuilder {
             ast::RawNode::Let(letd) => NodeKind::Let {
                 name: letd.name.0,
                 value: self.read_node(module, *letd.value)?.into(),
+                expr: self.unit_node().into(),
             },
         };
 
@@ -244,12 +286,73 @@ impl HlirBuilder {
     fn unknown_type(&mut self) -> Type {
         Type::Unknown(inc!(self.type_counter))
     }
+
+    fn unit_node(&self) -> Node {
+        Node {
+            kind: NodeKind::Block(vec![]),
+            ty: Type::Unit,
+            source_span: Span(FileId(usize::MAX), 0, 0),
+        }
+    }
+}
+
+pub struct BuiltinIR {
+    pub name: Spur,
+    pub ty: Type,
+    pub idx: usize,
+}
+
+pub struct Builtins {
+    pub builtins: HashMap<Spur, BuiltinIR>,
+}
+
+impl Builtins {
+    pub fn load(interner: &mut Rodeo, f: impl FnOnce(&mut BuiltinLoader)) -> Self {
+        let mut loader = BuiltinLoader {
+            interner,
+            idx: 0,
+            builtins: HashMap::new(),
+        };
+        f(&mut loader);
+        Builtins {
+            builtins: loader.builtins,
+        }
+    }
+}
+
+pub struct BuiltinLoader<'a> {
+    interner: &'a mut Rodeo,
+    idx: usize,
+    pub builtins: HashMap<Spur, BuiltinIR>,
+}
+
+impl<P: crate::interpreter::Ports> crate::interpreter::builtin::LoadBuiltin<P>
+    for BuiltinLoader<'_>
+{
+    fn load_builtin<F, I>(&mut self, name: &str, f: F)
+    where
+        F: crate::interpreter::builtin::BuiltinFunction<P, I> + 'static,
+        P: 'static,
+        I: 'static,
+    {
+        let key = self.interner.get_or_intern(name);
+        let ir = BuiltinIR {
+            name: key,
+            ty: f.extract_type(),
+            idx: inc!(self.idx),
+        };
+        self.builtins.insert(key, ir);
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::parser::parse;
+    use crate::{
+        hlir::{name_resolve::NameResolver, simplify::Simplifier, visitor::HlirVisitor},
+        interpreter::standard::{load_standard_builtins, StandardPorts},
+        parser::parse,
+    };
     use lasso::Rodeo;
     use pretty_assertions::assert_eq;
 
@@ -261,6 +364,13 @@ mod test {
 
         let mut builder = HlirBuilder::default();
         builder.read_module(FileId(0), ast).unwrap();
+
+        let builtins = Builtins::load(&mut interner, |l| {
+            load_standard_builtins::<StandardPorts>(l)
+        });
+
+        Simplifier.walk_hlir(&mut builder.hlir);
+        NameResolver::new(&builtins).walk_hlir(&mut builder.hlir);
 
         let key = |v| interner.get(v).unwrap();
 
@@ -275,29 +385,91 @@ mod test {
             arguments: vec![],
             return_ty: Unit,
             body: Node {
-                kind: Block(vec![Node {
-                    kind: Call {
-                        callee: Node {
-                            kind: Name(key("print")),
-                            ty: Unknown(0),
-                            source_span: Span(FileId(0), 12, 17),
-                        }
-                        .into(),
-                        args: vec![Node {
-                            kind: Literal(self::Literal::String(key("hello"))),
-                            ty: Unknown(1),
-                            source_span: Span(FileId(0), 18, 25),
-                        }],
-                    },
-                    ty: Unknown(2),
-                    source_span: Span(FileId(0), 12, 26),
-                }]),
-                ty: Unknown(3),
-                source_span: Span(FileId(0), 10, 29),
+                kind: Call {
+                    callee: Node {
+                        kind: Builtin(key("print")),
+                        ty: Function {
+                            inputs: vec![String],
+                            output: Unit.into(),
+                        },
+                        source_span: Span(FileId(0), 12, 17),
+                    }
+                    .into(),
+                    args: vec![Node {
+                        kind: Literal(self::Literal::String(key("hello"))),
+                        ty: Unknown(1),
+                        source_span: Span(FileId(0), 18, 25),
+                    }],
+                },
+                ty: Unknown(2),
+                source_span: Span(FileId(0), 12, 26),
             },
         };
         let functions = HashMap::from([(FunctionId(0), func)]);
+        assert_eq!(
+            module,
+            &Module {
+                file: FileId(0),
+                id: ModuleId(0),
+                name: None,
+                functions
+            }
+        );
+    }
+
+    #[test]
+    fn let_fold() {
+        let source = r#"fn main() { let a = 1; a; }"#;
+        let mut interner = Rodeo::default();
+        let ast = parse(source, &mut interner).unwrap();
+
+        let mut builder = HlirBuilder::default();
+        builder.read_module(FileId(0), ast).unwrap();
+
+        let builtins = Builtins::load(&mut interner, |l| {
+            load_standard_builtins::<StandardPorts>(l)
+        });
+
+        Simplifier.walk_hlir(&mut builder.hlir);
+        NameResolver::new(&builtins).walk_hlir(&mut builder.hlir);
+
+        let key = |v: &str| interner.get(v).unwrap();
+
+        let module = builder.hlir.modules.get(&ModuleId(0)).unwrap();
+
+        use NodeKind::*;
+        use Type::*;
+
+        let source = r#"fn main() { let a = 1; a; }"#;
+        // becomes
+        let func = FnDef {
+            id: FunctionId(0),
+            name: Some(key("main")),
+            arguments: vec![],
+            return_ty: Unit,
+            body: Node {
+                kind: Let {
+                    name: key("a"),
+                    value: Node {
+                        kind: Literal(self::Literal::Int(1)),
+                        ty: Unknown(0),
+                        source_span: Span(FileId(0), 20, 21),
+                    }
+                    .into(),
+                    expr: Node {
+                        kind: Name(key("a")),
+                        ty: Unknown(2),
+                        source_span: Span(FileId(0), 23, 24),
+                    }
+                    .into(),
+                },
+                ty: Unknown(1),
+                source_span: Span(FileId(0), 12, 22),
+            },
+        };
+
         println!("{:?}", builder.hlir);
+        let functions = HashMap::from([(FunctionId(0), func)]);
         assert_eq!(
             module,
             &Module {
