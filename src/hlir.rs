@@ -6,9 +6,10 @@ pub mod visitor;
 
 use std::collections::HashMap;
 
-use lasso::{Rodeo, Spur};
+use lasso::Spur;
 
 use crate::inc;
+use crate::intern::INTERNER;
 use crate::parser as ast;
 use crate::parser::BinopKind;
 
@@ -307,9 +308,8 @@ pub struct Builtins {
 }
 
 impl Builtins {
-    pub fn load(interner: &mut Rodeo, f: impl FnOnce(&mut BuiltinLoader)) -> Self {
+    pub fn load(f: impl FnOnce(&mut BuiltinLoader)) -> Self {
         let mut loader = BuiltinLoader {
-            interner,
             idx: 0,
             builtins: HashMap::new(),
         };
@@ -320,22 +320,19 @@ impl Builtins {
     }
 }
 
-pub struct BuiltinLoader<'a> {
-    interner: &'a mut Rodeo,
+pub struct BuiltinLoader {
     idx: usize,
     pub builtins: HashMap<Spur, BuiltinIR>,
 }
 
-impl<P: crate::interpreter::Ports> crate::interpreter::builtin::LoadBuiltin<P>
-    for BuiltinLoader<'_>
-{
+impl<P: crate::interpreter::Ports> crate::interpreter::builtin::LoadBuiltin<P> for BuiltinLoader {
     fn load_builtin<F, I>(&mut self, name: &str, f: F)
     where
         F: crate::interpreter::builtin::BuiltinFunction<P, I> + 'static,
         P: 'static,
         I: 'static,
     {
-        let key = self.interner.get_or_intern(name);
+        let key = INTERNER.get_or_intern(name);
         let ir = BuiltinIR {
             name: key,
             ty: f.extract_type(),
@@ -353,26 +350,22 @@ mod test {
         interpreter::standard::{load_standard_builtins, StandardPorts},
         parser::parse,
     };
-    use lasso::Rodeo;
     use pretty_assertions::assert_eq;
 
     #[test]
     fn simple() {
         let source = r#"fn main() { print("hello"); }"#;
-        let mut interner = Rodeo::default();
-        let ast = parse(source, &mut interner).unwrap();
+        let ast = parse(source).unwrap();
 
         let mut builder = HlirBuilder::default();
         builder.read_module(FileId(0), ast).unwrap();
 
-        let builtins = Builtins::load(&mut interner, |l| {
-            load_standard_builtins::<StandardPorts>(l)
-        });
+        let builtins = Builtins::load(|l| load_standard_builtins::<StandardPorts>(l));
 
         Simplifier.walk_hlir(&mut builder.hlir);
         NameResolver::new(&builtins).walk_hlir(&mut builder.hlir);
 
-        let key = |v| interner.get(v).unwrap();
+        let key = |v| INTERNER.get(v).unwrap();
 
         let module = builder.hlir.modules.get(&ModuleId(0)).unwrap();
 
@@ -420,20 +413,17 @@ mod test {
     #[test]
     fn let_fold() {
         let source = r#"fn main() { let a = 1; a; }"#;
-        let mut interner = Rodeo::default();
-        let ast = parse(source, &mut interner).unwrap();
+        let ast = parse(source).unwrap();
 
         let mut builder = HlirBuilder::default();
         builder.read_module(FileId(0), ast).unwrap();
 
-        let builtins = Builtins::load(&mut interner, |l| {
-            load_standard_builtins::<StandardPorts>(l)
-        });
+        let builtins = Builtins::load(|l| load_standard_builtins::<StandardPorts>(l));
 
         Simplifier.walk_hlir(&mut builder.hlir);
         NameResolver::new(&builtins).walk_hlir(&mut builder.hlir);
 
-        let key = |v: &str| interner.get(v).unwrap();
+        let key = |v: &str| INTERNER.get(v).unwrap();
 
         let module = builder.hlir.modules.get(&ModuleId(0)).unwrap();
 

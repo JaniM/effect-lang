@@ -197,9 +197,9 @@ fn parser() -> impl MParser<Vec<Node>> {
         .then_ignore(end())
 }
 
-pub fn parse(source: &str, interner: &mut Rodeo) -> Result<Vec<Node>, Vec<Simple<Token>>> {
+pub fn parse(source: &str) -> Result<Vec<Node>, Vec<Simple<Token>>> {
     let mut lexer = Lexer::new(source);
-    let tokens = lexer.collect(interner).unwrap();
+    let tokens = lexer.collect().unwrap();
 
     parse_tokens(tokens)
 }
@@ -216,9 +216,9 @@ macro_rules! node {
     ($a:literal .. $b:literal, $($t:tt)+) => {
         Spanned(node!($($t)+), $a .. $b)
     };
-    (let $key:ident $name:ident ($s:expr) = $value:expr) => {
+    (let $name:ident ($s:expr) = $value:expr) => {
         RawNode::Let(Let {
-            name: Spanned($key(stringify!($name)), $s),
+            name: Spanned(crate::intern::INTERNER.get_or_intern(stringify!($name)), $s),
             value: Box::new($value),
         })
     };
@@ -242,9 +242,9 @@ macro_rules! node {
             args: vec![$($arg),*],
         })
     };
-    (fn $key:ident $name:ident () $body:expr) => {
+    (fn $name:ident () $body:expr) => {
         RawNode::FnDef(FnDef {
-            name: Some($key(stringify!($name))),
+            name: Some(crate::intern::INTERNER.get_or_intern(stringify!($name))),
             body: $body
         })
     };
@@ -256,11 +256,11 @@ macro_rules! node {
     (number $v:expr) => {
         RawNode::Number($v)
     };
-    (name $key:ident $v:expr) => {
-        RawNode::Name($key($v))
+    (name $v:expr) => {
+        RawNode::Name(crate::intern::INTERNER.get_or_intern($v))
     };
-    (string $key:ident $v:expr) => {
-        RawNode::String($key($v))
+    (string $v:expr) => {
+        RawNode::String(crate::intern::INTERNER.get_or_intern($v))
     };
 }
 
@@ -275,15 +275,13 @@ mod test {
     fn simple() {
         let source = r#"fn main() { print("hello"); }"#;
         let mut interner = Rodeo::default();
-        let ast = parse(source, &mut interner).unwrap();
+        let ast = parse(source).unwrap();
 
-        let key = |v| interner.get(v).unwrap();
-
-        let main = node!(0..29, fn key main()
+        let main = node!(0..29, fn main()
             node!(10..29, block,
                 node!(12..26, call
-                    node!(12..17, name key "print"),
-                    node!(18..25, string key "hello")
+                    node!(12..17, name "print"),
+                    node!(18..25, string "hello")
                 )
             )
         );
@@ -304,25 +302,23 @@ mod test {
         "#,
         );
         let mut interner = Rodeo::default();
-        let ast = parse(&source, &mut interner).unwrap();
-
-        let key = |v: &str| interner.get(v).unwrap();
+        let ast = parse(&source).unwrap();
 
         let assign = node!(16..26,
-            let key a (20..21) = node!(24..25, number 1));
+            let a (20..21) = node!(24..25, number 1));
 
         let if_clause = node!(31..74, if
             node!(35..41, binop Equals,
-                node!(35..36, name key "a"),
+                node!(35..36, name "a"),
                 node!(40..41, number 1)),
             node!(43..74, block,
                 node!(53..67, call
-                    node!(53..58, name key "print"),
-                    node!(59..66, string key "hello"))
+                    node!(53..58, name "print"),
+                    node!(59..66, string "hello"))
             )
         );
 
-        let main = node!(0..76, fn key main()
+        let main = node!(0..76, fn main()
             node!(10..76, block, assign, if_clause));
 
         assert_eq!(ast, vec![main]);

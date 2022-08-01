@@ -1,5 +1,6 @@
 mod compile;
 mod hlir;
+mod intern;
 mod interpreter;
 mod ir;
 mod lexer;
@@ -18,7 +19,6 @@ use crate::{
     interpreter::standard::{load_standard_builtins, StandardPorts},
     parser::parse,
 };
-use lasso::Rodeo;
 use unindent::unindent;
 
 #[macro_export]
@@ -62,22 +62,19 @@ fn main() {
 
     println!("Source:\n{}\n", source);
 
-    let mut interner = Rodeo::default();
-    let ast = parse(&source, &mut interner).unwrap();
+    let ast = parse(&source).unwrap();
 
     let mut builder = HlirBuilder::default();
     builder.read_module(FileId(0), ast).unwrap();
     let mut hlir = builder.hlir;
 
-    let builtins = Builtins::load(&mut interner, |l| {
-        load_standard_builtins::<StandardPorts>(l)
-    });
+    let builtins = Builtins::load(|l| load_standard_builtins::<StandardPorts>(l));
 
     Simplifier.walk_hlir(&mut hlir);
     NameResolver::new(&builtins).walk_hlir(&mut hlir);
     Typechecker::default().walk_hlir(&mut hlir);
 
-    let mut pretty = PrettyPrint::new(&interner);
+    let mut pretty = PrettyPrint::default();
     pretty.walk_hlir(&mut hlir);
     println!("HIR:");
     print_fragments(&pretty.fragments);

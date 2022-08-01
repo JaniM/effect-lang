@@ -7,11 +7,12 @@ edition = "2021"
 
 [dependencies]
 chumsky = "*"
-lasso = "*"
+lasso = { version = "*", features = ["multi-threaded"] }
 logos = "*"
 derive_more = "*"
 colored = "*"
 unindent = "*"
+once_cell = "*"
 
 [dev-dependencies]
 pretty_assertions = "*"

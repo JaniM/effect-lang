@@ -3,6 +3,8 @@ use std::ops::Range;
 use lasso::{Rodeo, Spur};
 use logos::Logos;
 
+use crate::intern::INTERNER;
+
 type Span = Range<usize>;
 
 #[derive(Logos, Debug, PartialEq)]
@@ -94,7 +96,8 @@ impl Lexer<'_> {
         }
     }
 
-    pub fn next(&mut self, interner: &mut Rodeo) -> Result<Option<(Token, Span)>> {
+    pub fn next(&mut self) -> Result<Option<(Token, Span)>> {
+        let interner = &*INTERNER;
         let token = match self.lex.next() {
             Some(t) => t,
             None => return Ok(None),
@@ -126,9 +129,9 @@ impl Lexer<'_> {
         Ok(Some((token, self.lex.span())))
     }
 
-    pub fn collect(&mut self, interner: &mut Rodeo) -> Result<Vec<(Token, Span)>> {
+    pub fn collect(&mut self) -> Result<Vec<(Token, Span)>> {
         let mut tokens = Vec::new();
-        while let Some(token) = self.next(interner)? {
+        while let Some(token) = self.next()? {
             tokens.push(token);
         }
         Ok(tokens)
@@ -138,16 +141,14 @@ impl Lexer<'_> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use lasso::Rodeo;
 
     #[test]
     fn simple() {
         let source = r#"fn main() { print("hello"); }"#;
-        let mut interner = Rodeo::default();
         let mut lexer = Lexer::new(source);
-        let tokens = lexer.collect(&mut interner).unwrap();
+        let tokens = lexer.collect().unwrap();
 
-        let key = |v| interner.get(v).unwrap();
+        let key = |v| INTERNER.get(v).unwrap();
 
         use Token::*;
         assert_eq!(

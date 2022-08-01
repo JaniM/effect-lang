@@ -1,14 +1,13 @@
 use std::borrow::Cow;
 
-use lasso::Rodeo;
-
 use crate::{
     extract,
     hlir::{visitor::VisitAction, Literal},
+    intern::resolve_symbol,
     parser::BinopKind,
 };
 
-use super::{visitor::HlirVisitor, FnDef, Hlir, NodeKind, Type};
+use super::{visitor::HlirVisitor, FnDef, NodeKind, Type};
 
 #[derive(Debug)]
 pub enum Fragment<'a> {
@@ -17,19 +16,12 @@ pub enum Fragment<'a> {
     HardBreak,
 }
 
+#[derive(Debug, Default)]
 pub struct PrettyPrint<'a> {
-    pub interner: &'a Rodeo,
     pub fragments: Vec<Fragment<'a>>,
 }
 
 impl<'a> PrettyPrint<'a> {
-    pub fn new(interner: &'a Rodeo) -> Self {
-        Self {
-            interner,
-            fragments: Vec::new(),
-        }
-    }
-
     fn text(&mut self, x: impl Into<Cow<'a, str>>) {
         self.fragments.push(Fragment::Text(x.into()));
     }
@@ -94,7 +86,7 @@ impl HlirVisitor for PrettyPrint<'_> {
             ..
         } = function;
 
-        let name = name.map_or("<unnamed>", |x| self.interner.resolve(&x));
+        let name = name.map_or("<unnamed>", resolve_symbol);
         self.text(format!("fn {} #{} () -> ", name, id.0));
         self.format_type(return_ty);
         self.hard_break();
@@ -125,7 +117,7 @@ impl HlirVisitor for PrettyPrint<'_> {
         extract!(&mut node.kind, NodeKind::Let { name, value, expr });
 
         self.text("let ");
-        self.text(self.interner.resolve(name));
+        self.text(resolve_symbol(*name));
         self.text(": ");
         self.format_type(&value.ty);
         self.text(" = ");
@@ -198,7 +190,7 @@ impl HlirVisitor for PrettyPrint<'_> {
 
     fn visit_builtin(&mut self, node: &mut super::Node) -> VisitAction<Self> {
         extract!(&node.kind, NodeKind::Builtin(key));
-        let name = self.interner.resolve(key);
+        let name = resolve_symbol(*key);
         self.text("(");
         self.text(format!("{name}"));
         self.text(": ");
@@ -209,7 +201,7 @@ impl HlirVisitor for PrettyPrint<'_> {
 
     fn visit_name(&mut self, node: &mut super::Node) -> VisitAction<Self> {
         extract!(&node.kind, NodeKind::Name(key));
-        let name = self.interner.resolve(key);
+        let name = resolve_symbol(*key);
         self.text(format!("{name}"));
         self.text(": ");
         self.format_type(&node.ty);
@@ -235,7 +227,7 @@ impl HlirVisitor for PrettyPrint<'_> {
         extract!(&node.kind, NodeKind::Literal(lit));
         match lit {
             Literal::String(key) => {
-                let name = self.interner.resolve(key);
+                let name = resolve_symbol(*key);
                 self.text(format!(r#""{name}""#));
             }
             Literal::Int(v) => self.text(format!("{v}")),

@@ -391,38 +391,30 @@ mod test {
     use super::{name_resolve::resolve_names, *};
     use crate::{
         hlir::Builtins,
+        intern::INTERNER,
         interpreter::standard::{load_standard_builtins, StandardPorts},
         parser::parse,
         typecheck::Typechecker,
     };
-    use lasso::Rodeo;
 
     #[test]
     fn simple() {
         let source = r#"fn main() { print("hello"); }"#;
 
-        let mut interner = Rodeo::default();
-        let ast = parse(source, &mut interner).unwrap();
+        let ast = parse(source).unwrap();
         let mut builder = Builder::default();
         builder.read_top_nodes(&ast).unwrap();
 
         let mut ir = builder.to_ir();
 
-        ir.write(&IRWriteCtx::new(&interner, source));
-
-        let builtins = Builtins::load(&mut interner, |l| {
-            load_standard_builtins::<StandardPorts>(l)
-        });
+        let builtins = Builtins::load(|l| load_standard_builtins::<StandardPorts>(l));
 
         resolve_names(&builtins, &mut ir).unwrap();
-        ir.write(&IRWriteCtx::new(&interner, source));
 
-        let mut typecheck = Typechecker::new(&mut interner, &builtins);
+        let mut typecheck = Typechecker::new();
         typecheck.infer(&mut ir).unwrap();
 
-        ir.write(&IRWriteCtx::new(&interner, source));
-
-        let key = |v: &str| interner.get(v).unwrap();
+        let key = |v: &str| INTERNER.get(v).unwrap();
 
         assert_eq!(
             ir,

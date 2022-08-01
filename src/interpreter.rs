@@ -6,12 +6,13 @@ use core::panic;
 use std::{collections::HashMap, io::Write, rc::Rc};
 
 use chumsky::prelude::Simple;
-use lasso::{Rodeo, Spur};
+use lasso::Spur;
 
 use derive_more::From;
 
 use crate::{
     compile::{Builder, CompileError},
+    intern::{resolve_symbol, INTERNER},
     lexer::{LexError, Lexer, Token},
     lower::{Instruction, LowerError, Lowerer, Value},
     parser::parse_tokens,
@@ -32,7 +33,6 @@ struct CallFrame {
 pub struct Interpreter<P: Ports> {
     insts: Vec<Instruction>,
     globals: HashMap<Spur, Value>,
-    interner: Rodeo,
     ip: usize,
     stdout: Option<P::Stdout>,
     frame: CallFrame,
@@ -59,7 +59,6 @@ impl<P: Ports> Interpreter<P> {
         Interpreter {
             insts: Vec::new(),
             globals: HashMap::new(),
-            interner: Rodeo::default(),
             ip: 0,
             stdout: None,
             frame: CallFrame::default(),
@@ -75,7 +74,7 @@ impl<P: Ports> Interpreter<P> {
     }
 
     pub fn load_source(&mut self, source: &str) -> Result<(), BuildError> {
-        let tokens = Lexer::new(source).collect(&mut self.interner)?;
+        let tokens = Lexer::new(source).collect()?;
         let ast = parse_tokens(tokens)?;
 
         let mut builder = Builder::default();
@@ -97,7 +96,7 @@ impl<P: Ports> Interpreter<P> {
     }
 
     fn find_entry_point(&self) -> Option<usize> {
-        let key = self.interner.get("main")?;
+        let key = INTERNER.get("main")?;
         let main = self.globals.get(&key)?;
         match main {
             Value::Function(pos, _) => Some(*pos),
@@ -136,7 +135,7 @@ impl<P: Ports> Interpreter<P> {
     }
 
     fn push_string(&mut self, key: Spur) -> ExecuteResult {
-        let string = self.interner.resolve(&key).to_owned();
+        let string = resolve_symbol(key).to_owned();
         self.stack.push(Value::String(string));
         Ok(())
     }
@@ -167,7 +166,7 @@ impl<P: Ports> LoadBuiltin<P> for Interpreter<P> {
         I: 'static,
     {
         let argc = f.arg_count() as u32;
-        let key = self.interner.get_or_intern(name);
+        let key = INTERNER.get_or_intern(name);
 
         self.builtins.push(Rc::new(BuiltinAdapter::new(f)));
 

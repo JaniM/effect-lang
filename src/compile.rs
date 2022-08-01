@@ -126,19 +126,17 @@ impl Builder {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::parser::parse;
-    use lasso::Rodeo;
+    use crate::{intern::INTERNER, parser::parse};
 
     #[test]
     fn simple() {
         let source = r#"fn main() { print("hello"); }"#;
 
-        let mut interner = Rodeo::default();
-        let ast = parse(source, &mut interner).unwrap();
+        let ast = parse(source).unwrap();
         let mut builder = Builder::default();
         builder.read_top_nodes(&ast).unwrap();
 
-        let key = |v| interner.get(v).unwrap();
+        let key = |v| INTERNER.get(v).unwrap();
 
         use HLInstruction::*;
         assert_eq!(

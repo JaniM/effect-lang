@@ -3,8 +3,7 @@ use lasso::{Rodeo, Spur};
 use crate::hlir::Builtins;
 use crate::ir::{Literal, Node, NodeKind, Type, IR};
 
-pub struct Typechecker<'a> {
-    interner: &'a mut Rodeo,
+pub struct Typechecker {
     func_types: Vec<Type>,
 }
 
@@ -13,10 +12,9 @@ pub enum TypeError {}
 
 pub type TypeResult<T = (), E = TypeError> = Result<T, E>;
 
-impl<'a> Typechecker<'a> {
-    pub fn new(interner: &'a mut Rodeo, builtins: &'a Builtins) -> Self {
+impl Typechecker {
+    pub fn new() -> Self {
         Typechecker {
-            interner,
             func_types: Vec::new(),
         }
     }
