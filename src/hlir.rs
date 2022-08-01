@@ -430,8 +430,6 @@ mod test {
         use NodeKind::*;
         use Type::*;
 
-        let source = r#"fn main() { let a = 1; a; }"#;
-        // becomes
         let func = FnDef {
             id: FunctionId(0),
             name: Some(key("main")),

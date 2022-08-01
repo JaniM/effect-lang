@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use chumsky::{prelude::*, Parser, Stream};
-use lasso::{Rodeo, Spur};
+use lasso::Spur;
 
 use crate::lexer::{Lexer, Token};
 
@@ -209,6 +209,7 @@ pub fn parse_tokens(tokens: Vec<(Token, Span)>) -> Result<Vec<Node>, Vec<Simple<
     parser().parse(stream)
 }
 
+#[allow(unused_macros)]
 macro_rules! node {
     (box $($t:tt)+) => {
         Box::new(node!($($t)+))
@@ -267,14 +268,12 @@ macro_rules! node {
 #[cfg(test)]
 mod test {
     use super::*;
-    use lasso::Rodeo;
     use pretty_assertions::assert_eq;
     use unindent::unindent;
 
     #[test]
     fn simple() {
         let source = r#"fn main() { print("hello"); }"#;
-        let mut interner = Rodeo::default();
         let ast = parse(source).unwrap();
 
         let main = node!(0..29, fn main()
@@ -301,7 +300,6 @@ mod test {
             }
         "#,
         );
-        let mut interner = Rodeo::default();
         let ast = parse(&source).unwrap();
 
         let assign = node!(16..26,

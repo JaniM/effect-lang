@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::{ir::Type, lower::Value};
+use crate::{bytecode::Value, hlir::Type};
 
 use super::{Interpreter, Ports};
 

@@ -19,6 +19,7 @@ fn test_interpreter(source: &str) -> Interpreter<TestPorts> {
 }
 
 #[test]
+#[ignore]
 fn hello_world() {
     let source = r#"fn main() { print("hello"); }"#;
 

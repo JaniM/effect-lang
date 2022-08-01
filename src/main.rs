@@ -1,12 +1,9 @@
-mod compile;
+mod bytecode;
 mod hlir;
 mod intern;
 mod interpreter;
-mod ir;
 mod lexer;
-mod lower;
 mod parser;
-mod typecheck;
 
 use crate::{
     hlir::{name_resolve::NameResolver, pretty::PrettyPrint, simplify::Simplifier, HlirBuilder},

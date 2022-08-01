@@ -11,10 +11,9 @@ use lasso::Spur;
 use derive_more::From;
 
 use crate::{
-    compile::{Builder, CompileError},
+    bytecode::{Instruction, Value},
     intern::{resolve_symbol, INTERNER},
     lexer::{LexError, Lexer, Token},
-    lower::{Instruction, LowerError, Lowerer, Value},
     parser::parse_tokens,
 };
 
@@ -45,8 +44,6 @@ pub struct Interpreter<P: Ports> {
 pub enum BuildError {
     Lex(LexError),
     Parse(Vec<Simple<Token>>),
-    Compile(CompileError),
-    Lower(LowerError),
 }
 
 #[derive(Debug)]
@@ -77,14 +74,7 @@ impl<P: Ports> Interpreter<P> {
         let tokens = Lexer::new(source).collect()?;
         let ast = parse_tokens(tokens)?;
 
-        let mut builder = Builder::default();
-        builder.read_top_nodes(&ast)?;
-
-        let mut lowerer = Lowerer::default();
-        lowerer.read_functions(&builder.functions)?;
-
-        self.insts = lowerer.insts;
-        self.globals.extend(lowerer.globals);
+        self.insts = Vec::new();
 
         Ok(())
     }

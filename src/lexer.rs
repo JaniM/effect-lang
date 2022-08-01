@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use lasso::{Rodeo, Spur};
+use lasso::Spur;
 use logos::Logos;
 
 use crate::intern::INTERNER;
@@ -104,7 +104,7 @@ impl Lexer<'_> {
         };
 
         let slice = self.lex.slice();
-        let mut intern = |v: &str| interner.get_or_intern(v);
+        let intern = |v: &str| interner.get_or_intern(v);
 
         let token = match token {
             RawToken::Fn => Token::Fn,
