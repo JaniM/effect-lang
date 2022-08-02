@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::{bytecode::Value, hlir::Type};
+use crate::{bytecode::OldBadValue, hlir::Type};
 
 use super::{Interpreter, Ports};
 
@@ -12,7 +12,7 @@ trait Extract: Sized {
 impl Extract for String {
     fn extract<P: Ports>(interpreter: &mut Interpreter<P>) -> Option<Self> {
         match interpreter.stack.pop().unwrap() {
-            Value::String(x) => Some(x),
+            OldBadValue::String(x) => Some(x),
             x => {
                 interpreter.stack.push(x);
                 None

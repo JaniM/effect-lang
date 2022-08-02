@@ -11,7 +11,7 @@ use lasso::Spur;
 use derive_more::From;
 
 use crate::{
-    bytecode::{Instruction, Value},
+    bytecode::{OldBadInstruction, OldBadValue},
     intern::{resolve_symbol, INTERNER},
     lexer::{LexError, Lexer, Token},
     parser::parse_tokens,
@@ -30,13 +30,13 @@ struct CallFrame {
 }
 
 pub struct Interpreter<P: Ports> {
-    insts: Vec<Instruction>,
-    globals: HashMap<Spur, Value>,
+    insts: Vec<OldBadInstruction>,
+    globals: HashMap<Spur, OldBadValue>,
     ip: usize,
     stdout: Option<P::Stdout>,
     frame: CallFrame,
     executing: bool,
-    stack: Vec<Value>,
+    stack: Vec<OldBadValue>,
     builtins: Vec<Rc<dyn ErasedBuiltin<P>>>,
 }
 
@@ -89,7 +89,7 @@ impl<P: Ports> Interpreter<P> {
         let key = INTERNER.get("main")?;
         let main = self.globals.get(&key)?;
         match main {
-            Value::Function(pos, _) => Some(*pos),
+            OldBadValue::Function(pos, _) => Some(*pos),
             _ => panic!("main is not a function"),
         }
     }
@@ -109,10 +109,10 @@ impl<P: Ports> Interpreter<P> {
         self.ip += 1;
 
         match inst {
-            Instruction::PushString(key) => self.push_string(*key)?,
-            Instruction::Call(argc) => self.call_function(*argc)?,
-            Instruction::LoadLocal(key) => self.load_local(*key)?,
-            Instruction::Return => self.executing = false,
+            OldBadInstruction::PushString(key) => self.push_string(*key)?,
+            OldBadInstruction::Call(argc) => self.call_function(*argc)?,
+            OldBadInstruction::LoadLocal(key) => self.load_local(*key)?,
+            OldBadInstruction::Return => self.executing = false,
         }
 
         Ok(())
@@ -126,13 +126,13 @@ impl<P: Ports> Interpreter<P> {
 
     fn push_string(&mut self, key: Spur) -> ExecuteResult {
         let string = resolve_symbol(key).to_owned();
-        self.stack.push(Value::String(string));
+        self.stack.push(OldBadValue::String(string));
         Ok(())
     }
 
     fn call_function(&mut self, arg_count: u32) -> ExecuteResult {
         match &self.stack[self.stack.len() - arg_count as usize - 1] {
-            Value::Builtin(id, argc) => {
+            OldBadValue::Builtin(id, argc) => {
                 if *argc != arg_count {
                     panic!("Calling a nuiltin with incorrect arg count");
                 }
@@ -142,7 +142,7 @@ impl<P: Ports> Interpreter<P> {
 
                 Ok(())
             }
-            Value::Function(_, _) => todo!(),
+            OldBadValue::Function(_, _) => todo!(),
             x => panic!("Calling a non-function: {:?}", x),
         }
     }
@@ -161,6 +161,6 @@ impl<P: Ports> LoadBuiltin<P> for Interpreter<P> {
         self.builtins.push(Rc::new(BuiltinAdapter::new(f)));
 
         let id = self.builtins.len() - 1;
-        self.globals.insert(key, Value::Builtin(id, argc));
+        self.globals.insert(key, OldBadValue::Builtin(id, argc));
     }
 }

@@ -1,7 +1,5 @@
 use lasso::Spur;
 
-use crate::extract;
-
 use super::{
     visitor::{HlirVisitor, VisitAction},
     Builtins, NodeKind,
@@ -26,24 +24,25 @@ impl<'a> NameResolver<'a> {
 }
 
 impl HlirVisitor for NameResolver<'_> {
-    fn visit_name(&mut self, node: &mut super::Node) -> VisitAction<Self> {
-        extract!(&node.kind, NodeKind::Name(name));
+    fn visit_node(&mut self, node: &mut super::Node) -> VisitAction {
+        match &mut node.kind {
+            NodeKind::Let { name, value, expr } => {
+                self.walk_node(value);
 
-        if !self.name_in_scope(name) && let Some(b) = self.builtins.builtins.get(name) {
-            node.kind = NodeKind::Builtin(*name);
-            node.ty = b.ty.clone();
+                self.names.push(*name);
+                self.walk_node(expr);
+                self.names.pop();
+
+                VisitAction::Nothing
+            }
+            NodeKind::Name(name) => {
+                if !self.name_in_scope(name) && let Some(b) = self.builtins.builtins.get(name) {
+                    node.kind = NodeKind::Builtin(b.idx);
+                    node.ty = b.ty.clone();
+                }
+                VisitAction::Recurse
+            }
+            _ => VisitAction::Recurse,
         }
-
-        VisitAction::Nothing
-    }
-
-    fn visit_let(&mut self, node: &mut super::Node) -> VisitAction<Self> {
-        extract!(&node.kind, NodeKind::Let { name });
-
-        self.names.push(*name);
-
-        VisitAction::on_exit(|s: &mut Self, _| {
-            s.names.pop();
-        })
     }
 }

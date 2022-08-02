@@ -13,6 +13,8 @@ derive_more = "*"
 colored = "*"
 unindent = "*"
 once_cell = "*"
+tinyvec = "*"
+dbg-pls = { version = "*", features = ["derive", "pretty"] }
 
 [dev-dependencies]
 pretty_assertions = "*"

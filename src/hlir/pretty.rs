@@ -1,13 +1,12 @@
 use std::borrow::Cow;
 
 use crate::{
-    extract,
     hlir::{visitor::VisitAction, Literal},
     intern::resolve_symbol,
     parser::BinopKind,
 };
 
-use super::{visitor::HlirVisitor, FnDef, NodeKind, Type};
+use super::{visitor::HlirVisitorImmut, Builtins, FnDef, NodeKind, Type};
 
 #[derive(Debug)]
 pub enum Fragment<'a> {
@@ -16,13 +15,21 @@ pub enum Fragment<'a> {
     HardBreak,
 }
 
-#[derive(Debug, Default)]
-pub struct PrettyPrint<'a> {
-    pub fragments: Vec<Fragment<'a>>,
+#[derive(Debug)]
+pub struct PrettyPrint<'s, 'b> {
+    pub builtins: &'b Builtins,
+    pub fragments: Vec<Fragment<'s>>,
 }
 
-impl<'a> PrettyPrint<'a> {
-    fn text(&mut self, x: impl Into<Cow<'a, str>>) {
+impl<'s, 'b> PrettyPrint<'s, 'b> {
+    pub fn new(builtins: &'b Builtins) -> Self {
+        Self {
+            builtins,
+            fragments: Default::default(),
+        }
+    }
+
+    fn text(&mut self, x: impl Into<Cow<'s, str>>) {
         self.fragments.push(Fragment::Text(x.into()));
     }
 
@@ -70,14 +77,14 @@ impl<'a> PrettyPrint<'a> {
     }
 }
 
-impl HlirVisitor for PrettyPrint<'_> {
-    fn visit_module(&mut self, module: &mut super::Module) -> super::visitor::VisitAction<Self> {
+impl HlirVisitorImmut for PrettyPrint<'_, '_> {
+    fn visit_module(&mut self, module: &super::Module) -> VisitAction {
         self.text(format!("Module #{}", module.id.0));
         self.hard_break();
         VisitAction::Recurse
     }
 
-    fn visit_function(&mut self, function: &mut FnDef) -> VisitAction<Self> {
+    fn visit_function(&mut self, function: &FnDef) -> VisitAction {
         let FnDef {
             id,
             name,
@@ -98,141 +105,125 @@ impl HlirVisitor for PrettyPrint<'_> {
         VisitAction::Nothing
     }
 
-    fn visit_call(&mut self, node: &mut super::Node) -> VisitAction<Self> {
-        extract!(&mut node.kind, NodeKind::Call { callee, args });
-        self.walk_node(callee);
-        self.text("(");
-        let len = args.len();
-        for (i, arg) in args.iter_mut().enumerate() {
-            self.walk_node(arg);
-            if i < len - 1 {
-                self.text(", ");
+    fn visit_node(&mut self, node: &super::Node) -> VisitAction {
+        match &node.kind {
+            NodeKind::Let { name, value, expr } => {
+                self.text("let ");
+                self.text(resolve_symbol(*name));
+                self.text(": ");
+                self.format_type(&value.ty);
+                self.text(" = ");
+                self.walk_node(value);
+                self.text(" in");
+                self.indent();
+                self.hard_break();
+                self.walk_node(expr);
+                self.dedent();
+
+                VisitAction::Nothing
             }
-        }
-        self.text(")");
-        VisitAction::Nothing
-    }
+            NodeKind::Binop { op, left, right } => {
+                self.text("(");
+                self.indent();
+                self.walk_node(left);
 
-    fn visit_let(&mut self, node: &mut super::Node) -> VisitAction<Self> {
-        extract!(&mut node.kind, NodeKind::Let { name, value, expr });
+                match op {
+                    BinopKind::Equals => {
+                        self.text(" == ");
+                    }
+                }
 
-        self.text("let ");
-        self.text(resolve_symbol(*name));
-        self.text(": ");
-        self.format_type(&value.ty);
-        self.text(" = ");
-        self.walk_node(value);
-        self.text(" in");
-        self.indent();
-        self.hard_break();
-        self.walk_node(expr);
-        self.dedent();
+                self.walk_node(right);
+                self.dedent();
+                self.text("): ");
+                self.format_type(&node.ty);
 
-        VisitAction::Nothing
-    }
-
-    fn visit_if(&mut self, node: &mut super::Node) -> VisitAction<Self> {
-        extract!(
-            &mut node.kind,
+                VisitAction::Nothing
+            }
+            NodeKind::Call { callee, args } => {
+                self.walk_node(callee);
+                self.text("(");
+                let len = args.len();
+                for (i, arg) in args.iter().enumerate() {
+                    self.walk_node(arg);
+                    if i < len - 1 {
+                        self.text(", ");
+                    }
+                }
+                self.text(")");
+                VisitAction::Nothing
+            }
             NodeKind::If {
                 cond,
                 if_true,
-                if_false
+                if_false,
+            } => {
+                self.text("if: ");
+                self.format_type(&node.ty);
+                self.hard_break();
+                self.indent();
+
+                self.text("cond:  ");
+                self.indent();
+                self.walk_node(cond);
+                self.dedent();
+                self.hard_break();
+
+                self.text("true:  ");
+                self.walk_node(if_true);
+                self.hard_break();
+
+                if let Some(if_false) = if_false {
+                    self.text("false: ");
+                    self.walk_node(if_false);
+                    self.hard_break();
+                }
+
+                self.dedent();
+
+                VisitAction::Nothing
             }
-        );
-
-        self.text("if: ");
-        self.format_type(&node.ty);
-        self.hard_break();
-        self.indent();
-
-        self.text("cond:  ");
-        self.indent();
-        self.walk_node(cond);
-        self.dedent();
-        self.hard_break();
-
-        self.text("true:  ");
-        self.walk_node(if_true);
-        self.hard_break();
-
-        if let Some(if_false) = if_false {
-            self.text("false: ");
-            self.walk_node(if_false);
-            self.hard_break();
-        }
-
-        self.dedent();
-
-        VisitAction::Nothing
-    }
-
-    fn visit_binop(&mut self, node: &mut super::Node) -> VisitAction<Self> {
-        extract!(&mut node.kind, NodeKind::Binop { op, left, right });
-
-        self.text("(");
-        self.indent();
-        self.walk_node(left);
-
-        match op {
-            BinopKind::Equals => {
-                self.text(" == ");
+            NodeKind::Block(nodes) => {
+                self.text("{");
+                self.indent();
+                self.hard_break();
+                for node in nodes {
+                    self.walk_node(node);
+                    self.hard_break();
+                }
+                self.dedent();
+                self.text("}");
+                self.hard_break();
+                VisitAction::Nothing
             }
-        }
-
-        self.walk_node(right);
-        self.dedent();
-        self.text("): ");
-        self.format_type(&node.ty);
-
-        VisitAction::Nothing
-    }
-
-    fn visit_builtin(&mut self, node: &mut super::Node) -> VisitAction<Self> {
-        extract!(&node.kind, NodeKind::Builtin(key));
-        let name = resolve_symbol(*key);
-        self.text("(");
-        self.text(format!("{name}"));
-        self.text(": ");
-        self.format_type(&node.ty);
-        self.text(")");
-        VisitAction::Recurse
-    }
-
-    fn visit_name(&mut self, node: &mut super::Node) -> VisitAction<Self> {
-        extract!(&node.kind, NodeKind::Name(key));
-        let name = resolve_symbol(*key);
-        self.text(format!("{name}"));
-        self.text(": ");
-        self.format_type(&node.ty);
-        VisitAction::Recurse
-    }
-
-    fn visit_block(&mut self, node: &mut super::Node) -> VisitAction<Self> {
-        extract!(&mut node.kind, NodeKind::Block(nodes));
-        self.text("{");
-        self.indent();
-        self.hard_break();
-        for node in nodes {
-            self.walk_node(node);
-            self.hard_break();
-        }
-        self.dedent();
-        self.text("}");
-        self.hard_break();
-        VisitAction::Nothing
-    }
-
-    fn visit_literal(&mut self, node: &mut super::Node) -> VisitAction<Self> {
-        extract!(&node.kind, NodeKind::Literal(lit));
-        match lit {
-            Literal::String(key) => {
+            NodeKind::Literal(lit) => {
+                match lit {
+                    Literal::String(key) => {
+                        let name = resolve_symbol(*key);
+                        self.text(format!(r#""{name}""#));
+                    }
+                    Literal::Int(v) => self.text(format!("{v}")),
+                }
+                VisitAction::Recurse
+            }
+            NodeKind::Name(key) => {
                 let name = resolve_symbol(*key);
-                self.text(format!(r#""{name}""#));
+                self.text(format!("{name}"));
+                self.text(": ");
+                self.format_type(&node.ty);
+                VisitAction::Recurse
             }
-            Literal::Int(v) => self.text(format!("{v}")),
+            NodeKind::Builtin(idx) => {
+                let builtin = &self.builtins.builtins_ord[*idx];
+                let name = resolve_symbol(builtin.name);
+                self.text("(");
+                self.text(name);
+                self.text(": ");
+                self.format_type(&node.ty);
+                self.text(")");
+                VisitAction::Recurse
+            }
         }
-        VisitAction::Recurse
     }
 }
 

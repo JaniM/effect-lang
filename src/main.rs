@@ -1,3 +1,5 @@
+#![feature(box_patterns)]
+
 mod bytecode;
 mod hlir;
 mod intern;
@@ -6,6 +8,9 @@ mod lexer;
 mod parser;
 
 use crate::{
+    bytecode::{
+        optimize::simplify_function, print_function, Function, FunctionBuilder, FunctionBuilderCtx,
+    },
     hlir::{name_resolve::NameResolver, pretty::PrettyPrint, simplify::Simplifier, HlirBuilder},
     hlir::{
         pretty::print_fragments,
@@ -71,10 +76,21 @@ fn main() {
     NameResolver::new(&builtins).walk_hlir(&mut hlir);
     Typechecker::default().walk_hlir(&mut hlir);
 
-    let mut pretty = PrettyPrint::default();
+    let mut pretty = PrettyPrint::new(&builtins);
     pretty.walk_hlir(&mut hlir);
     println!("HIR:");
     print_fragments(&pretty.fragments);
 
     report_unknown_types(&mut hlir);
+
+    let module = hlir.modules.get(&hlir::ModuleId(0)).unwrap();
+    let fndef = module.functions.get(&hlir::FunctionId(0)).unwrap();
+
+    let mut ctx = FunctionBuilderCtx::default();
+    let mut func = Function::default();
+    FunctionBuilder::new(&mut func, &mut ctx).build_fndef(fndef);
+    simplify_function(&mut func);
+
+    println!("\nBytecode: ");
+    print_function(&func, &ctx);
 }

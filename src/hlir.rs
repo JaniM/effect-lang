@@ -77,36 +77,36 @@ pub enum NodeKind {
     Block(Vec<Node>),
     Literal(Literal),
     Name(Spur),
-    Builtin(Spur),
+    Builtin(usize),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Node {
-    kind: NodeKind,
-    ty: Type,
-    source_span: Span,
+    pub kind: NodeKind,
+    pub ty: Type,
+    pub source_span: Span,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FnDef {
-    id: FunctionId,
-    name: Option<Spur>,
-    arguments: Vec<FnArgument>,
-    return_ty: Type,
-    body: Node,
+    pub id: FunctionId,
+    pub name: Option<Spur>,
+    pub arguments: Vec<FnArgument>,
+    pub return_ty: Type,
+    pub body: Node,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Module {
-    file: FileId,
-    id: ModuleId,
-    name: Option<Spur>,
-    functions: HashMap<FunctionId, FnDef>,
+    pub file: FileId,
+    pub id: ModuleId,
+    pub name: Option<Spur>,
+    pub functions: HashMap<FunctionId, FnDef>,
 }
 
 #[derive(Default, Debug)]
 pub struct Hlir {
-    modules: HashMap<ModuleId, Module>,
+    pub modules: HashMap<ModuleId, Module>,
 }
 
 #[derive(Default)]
@@ -297,35 +297,39 @@ impl HlirBuilder {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct BuiltinIR {
     pub name: Spur,
     pub ty: Type,
     pub idx: usize,
 }
 
+#[derive(Debug, Default)]
 pub struct Builtins {
     pub builtins: HashMap<Spur, BuiltinIR>,
+    pub builtins_ord: Vec<BuiltinIR>,
 }
 
 impl Builtins {
     pub fn load(f: impl FnOnce(&mut BuiltinLoader)) -> Self {
+        let mut builtins = Builtins::default();
         let mut loader = BuiltinLoader {
             idx: 0,
-            builtins: HashMap::new(),
+            builtins: &mut builtins,
         };
         f(&mut loader);
-        Builtins {
-            builtins: loader.builtins,
-        }
+        builtins
     }
 }
 
-pub struct BuiltinLoader {
+pub struct BuiltinLoader<'a> {
     idx: usize,
-    pub builtins: HashMap<Spur, BuiltinIR>,
+    pub builtins: &'a mut Builtins,
 }
 
-impl<P: crate::interpreter::Ports> crate::interpreter::builtin::LoadBuiltin<P> for BuiltinLoader {
+impl<P: crate::interpreter::Ports> crate::interpreter::builtin::LoadBuiltin<P>
+    for BuiltinLoader<'_>
+{
     fn load_builtin<F, I>(&mut self, name: &str, f: F)
     where
         F: crate::interpreter::builtin::BuiltinFunction<P, I> + 'static,
@@ -338,7 +342,8 @@ impl<P: crate::interpreter::Ports> crate::interpreter::builtin::LoadBuiltin<P> f
             ty: f.extract_type(),
             idx: inc!(self.idx),
         };
-        self.builtins.insert(key, ir);
+        self.builtins.builtins.insert(key, ir.clone());
+        self.builtins.builtins_ord.push(ir);
     }
 }
 
@@ -380,7 +385,7 @@ mod test {
             body: Node {
                 kind: Call {
                     callee: Node {
-                        kind: Builtin(key("print")),
+                        kind: Builtin(0),
                         ty: Function {
                             inputs: vec![String],
                             output: Unit.into(),
