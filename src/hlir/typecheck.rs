@@ -84,6 +84,7 @@ impl HlirVisitor for Typechecker {
                 VisitAction::Nothing
             }
             NodeKind::Builtin(_) => VisitAction::Nothing,
+            NodeKind::Function(_) => VisitAction::Nothing,
         }
     }
 }

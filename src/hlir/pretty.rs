@@ -1,4 +1,6 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashMap};
+
+use lasso::Spur;
 
 use crate::{
     hlir::{visitor::VisitAction, Literal},
@@ -6,7 +8,9 @@ use crate::{
     parser::BinopKind,
 };
 
-use super::{visitor::HlirVisitorImmut, Builtins, FnDef, NodeKind, Type};
+use super::{
+    name_resolve::FnHeader, visitor::HlirVisitorImmut, Builtins, FnDef, FunctionId, NodeKind, Type,
+};
 
 #[derive(Debug)]
 pub enum Fragment<'a> {
@@ -19,6 +23,7 @@ pub enum Fragment<'a> {
 pub struct PrettyPrint<'s, 'b> {
     pub builtins: &'b Builtins,
     pub fragments: Vec<Fragment<'s>>,
+    global: HashMap<FunctionId, FnHeader>,
 }
 
 impl<'s, 'b> PrettyPrint<'s, 'b> {
@@ -26,6 +31,7 @@ impl<'s, 'b> PrettyPrint<'s, 'b> {
         Self {
             builtins,
             fragments: Default::default(),
+            global: HashMap::new(),
         }
     }
 
@@ -79,6 +85,24 @@ impl<'s, 'b> PrettyPrint<'s, 'b> {
 
 impl HlirVisitorImmut for PrettyPrint<'_, '_> {
     fn visit_module(&mut self, module: &super::Module) -> VisitAction {
+        self.global = module
+            .functions
+            .values()
+            .filter_map(|v| {
+                Some((
+                    v.id,
+                    FnHeader {
+                        id: v.id,
+                        name: v.name,
+                        ty: Type::Function {
+                            inputs: vec![],
+                            output: Type::Unit.into(),
+                        },
+                    },
+                ))
+            })
+            .collect();
+
         self.text(format!("Module #{}", module.id.0));
         self.hard_break();
         VisitAction::Recurse
@@ -145,7 +169,9 @@ impl HlirVisitorImmut for PrettyPrint<'_, '_> {
                 VisitAction::Nothing
             }
             NodeKind::Call { callee, args } => {
+                self.text("(");
                 self.walk_node(callee);
+                self.text(")");
                 self.text("(");
                 let len = args.len();
                 for (i, arg) in args.iter().enumerate() {
@@ -220,11 +246,17 @@ impl HlirVisitorImmut for PrettyPrint<'_, '_> {
             NodeKind::Builtin(idx) => {
                 let builtin = &self.builtins.builtins_ord[*idx];
                 let name = resolve_symbol(builtin.name);
-                self.text("(");
                 self.text(name);
                 self.text(": ");
                 self.format_type(&node.ty);
-                self.text(")");
+                VisitAction::Recurse
+            }
+            NodeKind::Function(id) => {
+                let header = self.global.get(id).unwrap();
+                let name = header.name.map_or("", resolve_symbol);
+                self.text(name);
+                self.text(": ");
+                self.format_type(&node.ty);
                 VisitAction::Recurse
             }
         }

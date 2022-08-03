@@ -31,15 +31,22 @@ pub trait Ports {
     type Stdout: Write + 'static;
 }
 
+#[derive(Default)]
+struct Frame {
+    registers: [Value; 32],
+    return_addr: usize,
+}
+
 pub struct Interpreter<P: Ports> {
     program: Program,
     ip: usize,
     stdout: Option<P::Stdout>,
     executing: bool,
     stack: Vec<Value>,
-    registers: [Value; 256],
     builtins: Vec<Rc<dyn ErasedBuiltin<P>>>,
     compare: Ordering,
+    frame: Frame,
+    frames: Vec<Frame>,
 }
 
 #[derive(Debug, From)]
@@ -61,9 +68,10 @@ impl<P: Ports> Interpreter<P> {
             stdout: None,
             executing: false,
             stack: Vec::new(),
-            registers: std::array::from_fn(|_| Default::default()),
             builtins: Vec::new(),
             compare: Ordering::Equal,
+            frame: Default::default(),
+            frames: Default::default(),
         }
     }
 
@@ -115,34 +123,40 @@ impl<P: Ports> Interpreter<P> {
 
         match *inst {
             Instruction::Copy(Register(from), Register(to)) => {
-                self.registers[to as usize] = self.registers[from as usize].clone();
+                self.frame.registers[to as usize] = self.frame.registers[from as usize].clone();
             }
             Instruction::LoadConstant(idx, Register(reg)) => {
-                self.registers[reg as usize] = self.program.constants[idx as usize].clone();
+                self.frame.registers[reg as usize] = self.program.constants[idx as usize].clone();
             }
             Instruction::LoadLocal(idx, Register(reg)) => {
                 // FIXME: This is a temporary hack.
                 let idx = idx as usize + 128;
-                self.registers[reg as usize] = self.registers[idx].clone();
+                self.frame.registers[reg as usize] = self.frame.registers[idx].clone();
             }
             Instruction::StoreLocal(idx, Register(reg)) => {
                 // FIXME: This is a temporary hack.
                 let idx = idx as usize + 128;
-                self.registers[idx] = self.registers[reg as usize].clone();
+                self.frame.registers[idx] = self.frame.registers[reg as usize].clone();
             }
             Instruction::LoadBuiltin(idx, Register(reg)) => {
-                self.registers[reg as usize] = Value::Builtin(idx);
+                self.frame.registers[reg as usize] = Value::Builtin(idx);
             }
             Instruction::Add(Register(a), Register(b), Register(out)) => {
-                match (&self.registers[a as usize], &self.registers[b as usize]) {
+                match (
+                    &self.frame.registers[a as usize],
+                    &self.frame.registers[b as usize],
+                ) {
                     (Value::Int(a), Value::Int(b)) => {
-                        self.registers[out as usize] = Value::Int(a + b);
+                        self.frame.registers[out as usize] = Value::Int(a + b);
                     }
                     (a, b) => panic!("Addition between {a:?} and {b:?} unimplemented"),
                 }
             }
             Instruction::IntCmp(Register(a), Register(b)) => {
-                match (&self.registers[a as usize], &self.registers[b as usize]) {
+                match (
+                    &self.frame.registers[a as usize],
+                    &self.frame.registers[b as usize],
+                ) {
                     (Value::Int(a), Value::Int(b)) => {
                         self.compare = a.cmp(b);
                     }
@@ -150,31 +164,41 @@ impl<P: Ports> Interpreter<P> {
                 }
             }
             Instruction::Equals(Register(reg)) => {
-                self.registers[reg] = Value::Bool(self.compare == Ordering::Equal);
+                self.frame.registers[reg as usize] = Value::Bool(self.compare == Ordering::Equal);
             }
             Instruction::Jump(addr) => {
                 self.ip = addr as usize;
             }
             Instruction::Branch(if_true, if_false, Register(reg)) => {
-                match &self.registers[reg as usize] {
+                match &self.frame.registers[reg as usize] {
                     Value::Bool(true) => self.ip = if_true as usize,
                     Value::Bool(false) => self.ip = if_false as usize,
                     x => panic!("Can't branxh on {x:?}"),
                 }
             }
-            Instruction::Call(Register(reg)) => match &self.registers[reg as usize] {
+            Instruction::Call(Register(reg)) => match &self.frame.registers[reg as usize] {
                 Value::Builtin(idx) => {
                     let builtin = self.builtins[*idx as usize].clone();
                     builtin.call(self);
                 }
-                Value::Function(_) => todo!(),
+                &Value::Function(idx) => {
+                    let old_frame = std::mem::take(&mut self.frame);
+                    self.frames.push(old_frame);
+
+                    self.frame.return_addr = self.ip;
+                    self.ip = idx as usize;
+                }
                 x => panic!("Can't call {:?}", x),
             },
-            Instruction::Return => {
-                self.executing = false;
-            }
+            Instruction::Return => match self.frames.pop() {
+                Some(frame) => {
+                    self.ip = self.frame.return_addr;
+                    self.frame = frame;
+                }
+                None => self.executing = false,
+            },
             Instruction::Push(Register(reg)) => {
-                self.stack.push(self.registers[reg as usize].clone());
+                self.stack.push(self.frame.registers[reg as usize].clone());
             }
             Instruction::Pop(_) => todo!(),
         }

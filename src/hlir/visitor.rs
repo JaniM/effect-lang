@@ -75,6 +75,7 @@ pub trait HlirVisitor: Sized {
                 NodeKind::Literal(_) => {}
                 NodeKind::Name(_) => {}
                 NodeKind::Builtin(_) => {}
+                NodeKind::Function(_) => {}
             },
             VisitAction::Nothing => {}
         }
@@ -163,6 +164,7 @@ pub trait HlirVisitorImmut: Sized {
                 NodeKind::Literal(_) => {}
                 NodeKind::Name(_) => {}
                 NodeKind::Builtin(_) => {}
+                NodeKind::Function(_) => {}
             },
             VisitAction::Nothing => {}
         }

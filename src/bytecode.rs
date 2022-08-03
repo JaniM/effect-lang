@@ -102,6 +102,28 @@ pub struct FunctionBuilderCtx {
     constants: Vec<Value>,
 }
 
+impl<T> Instruction<T> {
+    pub fn map_reg<U>(self, mut f: impl FnMut(Register<T>) -> Register<U>) -> Instruction<U> {
+        use Instruction::*;
+        match self {
+            Copy(a, b) => Copy(f(a), f(b)),
+            LoadConstant(i, r) => LoadConstant(i, f(r)),
+            LoadLocal(i, r) => LoadLocal(i, f(r)),
+            StoreLocal(i, r) => StoreLocal(i, f(r)),
+            LoadBuiltin(i, r) => LoadBuiltin(i, f(r)),
+            Add(a, b, c) => Add(f(a), f(b), f(c)),
+            IntCmp(a, b) => IntCmp(f(a), f(b)),
+            Equals(r) => Equals(f(r)),
+            Jump(i) => Jump(i),
+            Branch(a, b, r) => Branch(a, b, f(r)),
+            Call(r) => Call(f(r)),
+            Return => Return,
+            Push(r) => Push(f(r)),
+            Pop(r) => Pop(f(r)),
+        }
+    }
+}
+
 impl<T> Block<T> {
     fn resolve_inputs(&self) -> Vec<u32> {
         let mut written = HashSet::new();
@@ -267,13 +289,11 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
                 let func = self.next_reg();
                 self.walk_with_out(func, callee);
 
-                let reg = self.next_reg();
-                self.set_out_reg(reg);
                 for arg in args {
-                    self.walk_node(arg);
+                    let reg = self.next_reg();
+                    self.walk_with_out(reg, arg);
                     self.inst(Instruction::Push(reg));
                 }
-                self.pop_out_reg();
 
                 self.inst(Instruction::Call(func));
 
@@ -312,7 +332,6 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
                 self.walk_node(if_true);
                 self.inst(Instruction::Jump(end_block));
 
-                // TODO: handle if_false
                 if let Some(if_false) = if_false {
                     self.switch_block(false_block);
                     self.walk_node(if_false);
@@ -357,6 +376,15 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
                 self.inst(Instruction::LoadBuiltin(*idx as u32, reg));
                 VisitAction::Nothing
             }
+            NodeKind::Function(id) => {
+                let val = Value::Function(id.0 as u32);
+
+                let constant = self.create_constant(val);
+                let reg = self.out_reg();
+                self.inst(Instruction::LoadConstant(constant, reg));
+
+                VisitAction::Nothing
+            }
         }
     }
 }
@@ -371,7 +399,7 @@ fn print_inst(inst: &Instruction<usize>, consts: &Vec<Value>) {
                 "{reg:>pad$} = const {idx} ({})",
                 match &consts[*idx as usize] {
                     Value::Builtin(_) => todo!(),
-                    Value::Function(_) => todo!(),
+                    Value::Function(id) => format!("fn {}", id),
                     Value::String(v) => format!(r#""{v}""#),
                     Value::Int(v) => v.to_string(),
                     Value::Bool(v) => v.to_string(),

@@ -78,6 +78,7 @@ pub enum NodeKind {
     Literal(Literal),
     Name(Spur),
     Builtin(usize),
+    Function(FunctionId),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -375,31 +376,30 @@ mod test {
         let module = builder.hlir.modules.get(&ModuleId(0)).unwrap();
 
         use NodeKind::*;
-        use Type::*;
 
         let func = FnDef {
             id: FunctionId(0),
             name: Some(key("main")),
             arguments: vec![],
-            return_ty: Unit,
+            return_ty: Type::Unit,
             body: Node {
                 kind: Call {
                     callee: Node {
                         kind: Builtin(0),
-                        ty: Function {
-                            inputs: vec![String],
-                            output: Unit.into(),
+                        ty: Type::Function {
+                            inputs: vec![Type::String],
+                            output: Type::Unit.into(),
                         },
                         source_span: Span(FileId(0), 12, 17),
                     }
                     .into(),
                     args: vec![Node {
                         kind: Literal(self::Literal::String(key("hello"))),
-                        ty: Unknown(1),
+                        ty: Type::Unknown(1),
                         source_span: Span(FileId(0), 18, 25),
                     }],
                 },
-                ty: Unknown(2),
+                ty: Type::Unknown(2),
                 source_span: Span(FileId(0), 12, 26),
             },
         };

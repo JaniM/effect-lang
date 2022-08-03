@@ -1,18 +1,20 @@
+use std::collections::HashMap;
+
 use dbg_pls::DebugPls;
 
 use crate::{
-    hlir::{FnDef, Hlir, Module},
+    hlir::{FnDef, FunctionId, Hlir, Module},
     intern::resolve_symbol,
 };
 
 use super::{
     optimize::simplify_function, print_inst, Function, FunctionBuilder, FunctionBuilderCtx,
-    Instruction, Value,
+    Instruction, Register, Value,
 };
 
 #[derive(Debug, DebugPls)]
 pub struct Program {
-    pub insts: Vec<Instruction<usize>>,
+    pub insts: Vec<Instruction<u8>>,
     pub constants: Vec<Value>,
     pub entrypoint: usize,
 }
@@ -21,6 +23,7 @@ pub struct Program {
 struct ProgramBuilder {
     insts: Vec<Instruction<usize>>,
     ctx: FunctionBuilderCtx,
+    functions: HashMap<FunctionId, usize>,
     entrypoint: usize,
 }
 
@@ -30,9 +33,24 @@ impl Program {
         builder.load_hlir(hlir);
         let ProgramBuilder {
             insts,
-            ctx: FunctionBuilderCtx { constants },
+            ctx: FunctionBuilderCtx { mut constants },
+            functions,
             entrypoint,
         } = builder;
+
+        for constant in &mut constants {
+            match constant {
+                Value::Function(id) => {
+                    *id = *functions.get(&FunctionId(*id as usize)).unwrap() as u32;
+                }
+                _ => {}
+            }
+        }
+
+        let insts = insts
+            .into_iter()
+            .map(|x| x.map_reg(|r| Register(r.0.try_into().unwrap())))
+            .collect();
 
         Self {
             insts,
@@ -44,7 +62,8 @@ impl Program {
     pub fn print(&self) {
         for (idx, inst) in self.insts.iter().enumerate() {
             print!("  #{idx:<3}");
-            print_inst(inst, &self.constants);
+            let inst = inst.map_reg(|r| Register(r.0 as _));
+            print_inst(&inst, &self.constants);
         }
     }
 }
@@ -98,5 +117,7 @@ impl ProgramBuilder {
         if let Some(name) = def.name && resolve_symbol(name) == "main" {
             self.entrypoint = begin;
         }
+
+        self.functions.insert(def.id, begin);
     }
 }
