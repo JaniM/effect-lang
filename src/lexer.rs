@@ -27,6 +27,9 @@ enum RawToken {
     #[token("==")]
     Equals,
 
+    #[token("+")]
+    Plus,
+
     #[token(";")]
     Semicolon,
 
@@ -67,6 +70,7 @@ pub enum Token {
     Let,
     Equals,
     Assign,
+    Plus,
     Semicolon,
     OpenCurly,
     CloseCurly,
@@ -124,6 +128,7 @@ impl Lexer<'_> {
             RawToken::Error => return Err(LexError::Unknown(self.lex.span())),
             RawToken::Assign => Token::Assign,
             RawToken::Equals => Token::Equals,
+            RawToken::Plus => Token::Plus,
         };
 
         Ok(Some((token, self.lex.span())))

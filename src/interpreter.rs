@@ -133,6 +133,14 @@ impl<P: Ports> Interpreter<P> {
             Instruction::LoadBuiltin(idx, Register(reg)) => {
                 self.registers[reg as usize] = Value::Builtin(idx);
             }
+            Instruction::Add(Register(a), Register(b), Register(out)) => {
+                match (&self.registers[a as usize], &self.registers[b as usize]) {
+                    (Value::Int(a), Value::Int(b)) => {
+                        self.registers[out as usize] = Value::Int(a + b);
+                    }
+                    (a, b) => panic!("Addition between {a:?} and {b:?} unimplemented"),
+                }
+            }
             Instruction::IntCmp(Register(a), Register(b)) => {
                 match (&self.registers[a as usize], &self.registers[b as usize]) {
                     (Value::Int(a), Value::Int(b)) => {

@@ -132,6 +132,9 @@ impl HlirVisitorImmut for PrettyPrint<'_, '_> {
                     BinopKind::Equals => {
                         self.text(" == ");
                     }
+                    BinopKind::Add => {
+                        self.text(" + ");
+                    }
                 }
 
                 self.walk_node(right);

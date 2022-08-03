@@ -57,6 +57,7 @@ pub enum Instruction<T = DefaultReg> {
     StoreLocal(u32, Register<T>),
     /// Loads a builtin at idx to register.
     LoadBuiltin(u32, Register<T>),
+    Add(Register<T>, Register<T>, Register<T>),
     /// Compares registers and sets the comparison flag accordingly,
     IntCmp(Register<T>, Register<T>),
     /// Set the accumulator to true if the comparison flag is Equal.
@@ -250,9 +251,14 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
                 self.walk_with_out(right_reg, right);
 
                 let out = self.out_reg();
-                self.inst(Instruction::IntCmp(left_reg, right_reg));
                 match op {
-                    BinopKind::Equals => self.inst(Instruction::Equals(out)),
+                    BinopKind::Equals => {
+                        self.inst(Instruction::IntCmp(left_reg, right_reg));
+                        self.inst(Instruction::Equals(out));
+                    }
+                    BinopKind::Add => {
+                        self.inst(Instruction::Add(left_reg, right_reg, out));
+                    }
                 }
 
                 VisitAction::Nothing
@@ -377,6 +383,7 @@ fn print_inst(inst: &Instruction<usize>, consts: &Vec<Value>) {
         Instruction::StoreLocal(idx, reg) => println!("{:>spad$}store {idx}, {reg}", ""),
         Instruction::LoadBuiltin(idx, reg) => println!("{reg:>pad$} = builtin {idx}"),
         Instruction::Equals(reg) => println!("{reg:>pad$} = equals"),
+        Instruction::Add(a, b, reg) => println!("{reg:>pad$} = add {a}, {b}"),
         Instruction::IntCmp(a, b) => println!("{:>spad$}cmp {a}, {b}", ""),
         Instruction::Jump(addr) => println!("{:>spad$}jump #{addr}", ""),
         Instruction::Branch(true_addr, false_addr, reg) => {

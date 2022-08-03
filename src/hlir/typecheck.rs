@@ -1,6 +1,9 @@
 use lasso::Spur;
 
-use crate::hlir::{visitor::VisitAction, Literal};
+use crate::{
+    hlir::{visitor::VisitAction, Literal},
+    parser::BinopKind,
+};
 
 use super::{visitor::HlirVisitor, Hlir, Node, NodeKind, Type};
 
@@ -21,8 +24,15 @@ impl HlirVisitor for Typechecker {
 
                 VisitAction::Nothing
             }
-            NodeKind::Binop { .. } => {
-                node.ty = Type::Bool;
+            NodeKind::Binop { op, .. } => {
+                match op {
+                    BinopKind::Equals => {
+                        node.ty = Type::Bool;
+                    }
+                    BinopKind::Add => {
+                        node.ty = Type::Int;
+                    }
+                }
                 VisitAction::Recurse
             }
             NodeKind::Call { callee, args } => {

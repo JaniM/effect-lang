@@ -267,6 +267,17 @@ fn replace_regiater(inst: &mut Instruction<usize>, orig: Register<usize>, new: R
                 *b = new;
             }
         }
+        Add(a, b, c) => {
+            if *a == orig {
+                *a = new;
+            }
+            if *b == orig {
+                *b = new;
+            }
+            if *c == orig {
+                *c = new;
+            }
+        }
         _ => todo!("replace_regiater {:?}", inst),
     }
 }
@@ -339,6 +350,11 @@ pub fn describe_inst<T: Default + Copy>(inst: &Instruction<T>) -> InstDesc<T> {
         Instruction::IntCmp(a, b) => {
             reads.push(*a);
             reads.push(*b);
+        }
+        Instruction::Add(a, b, out) => {
+            reads.push(*a);
+            reads.push(*b);
+            writes.push(*out);
         }
         Instruction::Equals(reg) => {
             writes.push(*reg);
