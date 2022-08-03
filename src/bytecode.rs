@@ -288,20 +288,30 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
             NodeKind::If {
                 cond,
                 if_true,
-                if_false: _,
+                if_false,
             } => {
                 let true_block = self.new_block();
-                let end_block = self.new_block();
+                let false_block = self.new_block();
+                let end_block = if if_false.is_none() {
+                    false_block
+                } else {
+                    self.new_block()
+                };
 
                 let cond_reg = self.next_reg();
                 self.walk_with_out(cond_reg, cond);
-                self.inst(Instruction::Branch(true_block, end_block, cond_reg));
+                self.inst(Instruction::Branch(true_block, false_block, cond_reg));
 
                 self.switch_block(true_block);
                 self.walk_node(if_true);
                 self.inst(Instruction::Jump(end_block));
 
                 // TODO: handle if_false
+                if let Some(if_false) = if_false {
+                    self.switch_block(false_block);
+                    self.walk_node(if_false);
+                    self.inst(Instruction::Jump(end_block));
+                }
 
                 self.switch_block(end_block);
 

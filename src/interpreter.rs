@@ -144,7 +144,9 @@ impl<P: Ports> Interpreter<P> {
             Instruction::Equals(Register(reg)) => {
                 self.registers[reg] = Value::Bool(self.compare == Ordering::Equal);
             }
-            Instruction::Jump(_) => todo!(),
+            Instruction::Jump(addr) => {
+                self.ip = addr as usize;
+            }
             Instruction::Branch(if_true, if_false, Register(reg)) => {
                 match &self.registers[reg as usize] {
                     Value::Bool(true) => self.ip = if_true as usize,

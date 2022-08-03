@@ -60,10 +60,13 @@ fn main() {
         r#"
         fn main() {
             let y = 2;
-            let x = y;
-            if (y == x) {
+            let x = 0;
+            if (y == 2) {
                 print("hello");
+            } else {
+                print("sadge");
             }
+            print("after");
         }
         "#,
     );
