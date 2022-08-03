@@ -12,18 +12,19 @@ impl Ports for TestPorts {
 
 fn test_interpreter(source: &str) -> Interpreter<TestPorts> {
     let cursor = Cursor::new(Vec::new());
-    let mut interpreter = Interpreter::new().with_stdout(cursor);
+    let mut interpreter = Interpreter::load_source(source)
+        .unwrap()
+        .with_stdout(cursor);
     load_standard_builtins(&mut interpreter);
-    interpreter.load_source(source).unwrap();
     interpreter
 }
 
 #[test]
-#[ignore]
 fn hello_world() {
     let source = r#"fn main() { print("hello"); }"#;
 
     let mut interpreter = test_interpreter(source);
+    interpreter.program.print();
     interpreter.run().unwrap();
 
     assert_eq!(interpreter.stdout.unwrap().get_ref(), b"hello\n");

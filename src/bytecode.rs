@@ -1,6 +1,7 @@
 pub mod optimize;
+pub mod program;
 
-use std::{cmp::Ordering, collections::HashSet, fmt::Display, rc::Rc};
+use std::{collections::HashSet, fmt::Display, rc::Rc};
 
 use dbg_pls::DebugPls;
 use lasso::Spur;
@@ -15,36 +16,27 @@ use crate::{
     parser::BinopKind,
 };
 
-use self::optimize::describe_inst;
-
-pub enum OldBadInstruction {
-    PushString(Spur),
-    LoadLocal(Spur),
-    Call(u32),
-    Return,
-}
-
-#[derive(Clone, Debug)]
-pub enum OldBadValue {
-    Builtin(usize, u32),
-    Function(usize, u32),
-    String(String),
-}
-
 #[derive(Clone, Debug, DebugPls, PartialEq)]
 pub enum Value {
-    Builtin(usize),
-    Function(usize),
+    Builtin(u32),
+    Function(u32),
     String(Rc<String>),
     Int(i64),
     Bool(bool),
+    Nothing,
+}
+
+impl Default for Value {
+    fn default() -> Self {
+        Self::Nothing
+    }
 }
 
 /// Represents register indices.
 /// Register 0 is the accumulator, which is alwayx the result of the previous operation.
 #[derive(Clone, Copy, Debug, DebugPls, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[repr(transparent)]
-pub struct Register(u8);
+pub struct Register(pub u8);
 
 impl Register {
     const ACC: Register = Register(0);
@@ -56,7 +48,7 @@ impl Display for Register {
     }
 }
 
-#[derive(Debug, DebugPls, PartialEq)]
+#[derive(Clone, Copy, Debug, DebugPls, PartialEq)]
 pub enum Instruction {
     Copy(Register, Register),
     /// Loads a constant at idx to register.
@@ -238,12 +230,6 @@ impl<'a> FunctionBuilder<'a> {
         self.occupied_registers.retain(|x| x != &reg);
     }
 
-    fn with_reg(&mut self, f: impl FnOnce(&mut Self, Register)) {
-        let reg = self.next_reg();
-        f(self, reg);
-        self.release_reg(reg);
-    }
-
     fn walk_with_out(&mut self, out: Register, node: &Node) {
         self.set_out_reg(out);
         self.walk_node(node);
@@ -320,7 +306,7 @@ impl HlirVisitorImmut for FunctionBuilder<'_> {
             NodeKind::If {
                 cond,
                 if_true,
-                if_false,
+                if_false: _,
             } => {
                 let true_block = self.new_block();
                 let end_block = self.new_block();
@@ -390,6 +376,7 @@ fn print_inst(inst: &Instruction, consts: &Vec<Value>) {
                     Value::String(v) => format!(r#""{v}""#),
                     Value::Int(v) => v.to_string(),
                     Value::Bool(v) => v.to_string(),
+                    Value::Nothing => todo!(),
                 }
             );
         }
@@ -489,8 +476,8 @@ mod test {
                     Block {
                         insts: vec![
                             LoadConstant(0, Register(1)),
-                            LoadConstant(0, Register(3)),
-                            IntCmp(Register(1), Register(3)),
+                            LoadConstant(0, Register(2)),
+                            IntCmp(Register(1), Register(2)),
                             Equals,
                             Branch(1, 2, Register(0))
                         ],

@@ -3,16 +3,23 @@ pub mod standard;
 mod test;
 
 use core::panic;
-use std::{collections::HashMap, io::Write, rc::Rc};
+use std::{cmp::Ordering, io::Write, rc::Rc};
 
 use chumsky::prelude::Simple;
-use lasso::Spur;
 
 use derive_more::From;
 
 use crate::{
-    bytecode::{OldBadInstruction, OldBadValue},
-    intern::{resolve_symbol, INTERNER},
+    bytecode::{program::Program, Instruction, Register, Value},
+    hlir::{
+        self,
+        name_resolve::NameResolver,
+        simplify::Simplifier,
+        typecheck::{report_unknown_types, Typechecker},
+        visitor::HlirVisitor,
+        FileId, HlirBuilder,
+    },
+    interpreter::standard::{load_standard_builtins, StandardPorts},
     lexer::{LexError, Lexer, Token},
     parser::parse_tokens,
 };
@@ -24,20 +31,15 @@ pub trait Ports {
     type Stdout: Write + 'static;
 }
 
-#[derive(Default)]
-struct CallFrame {
-    return_addr: Option<usize>,
-}
-
 pub struct Interpreter<P: Ports> {
-    insts: Vec<OldBadInstruction>,
-    globals: HashMap<Spur, OldBadValue>,
+    program: Program,
     ip: usize,
     stdout: Option<P::Stdout>,
-    frame: CallFrame,
     executing: bool,
-    stack: Vec<OldBadValue>,
+    stack: Vec<Value>,
+    registers: [Value; 256],
     builtins: Vec<Rc<dyn ErasedBuiltin<P>>>,
+    compare: Ordering,
 }
 
 #[derive(Debug, From)]
@@ -52,16 +54,16 @@ pub enum ExecuteError {}
 type ExecuteResult<T = (), E = ExecuteError> = Result<T, E>;
 
 impl<P: Ports> Interpreter<P> {
-    pub fn new() -> Self {
+    pub fn new(program: Program) -> Self {
         Interpreter {
-            insts: Vec::new(),
-            globals: HashMap::new(),
+            program,
             ip: 0,
             stdout: None,
-            frame: CallFrame::default(),
             executing: false,
             stack: Vec::new(),
+            registers: std::array::from_fn(|_| Default::default()),
             builtins: Vec::new(),
+            compare: Ordering::Equal,
         }
     }
 
@@ -70,28 +72,31 @@ impl<P: Ports> Interpreter<P> {
         self
     }
 
-    pub fn load_source(&mut self, source: &str) -> Result<(), BuildError> {
+    pub fn load_source(source: &str) -> Result<Self, BuildError> {
         let tokens = Lexer::new(source).collect()?;
         let ast = parse_tokens(tokens)?;
 
-        self.insts = Vec::new();
+        let mut builder = HlirBuilder::default();
+        builder.read_module(FileId(0), ast).unwrap();
+        let mut hlir = builder.hlir;
 
-        Ok(())
+        let builtins = hlir::Builtins::load(|l| load_standard_builtins::<StandardPorts>(l));
+
+        Simplifier.walk_hlir(&mut hlir);
+        NameResolver::new(&builtins).walk_hlir(&mut hlir);
+        Typechecker::default().walk_hlir(&mut hlir);
+
+        report_unknown_types(&mut hlir);
+
+        let program = Program::from_hlir(&hlir);
+
+        let interpreter = Self::new(program);
+        Ok(interpreter)
     }
 
     fn begin(&mut self) {
-        // It is assumed `main` exists.
-        self.ip = self.find_entry_point().unwrap();
+        self.ip = self.program.entrypoint;
         self.executing = true;
-    }
-
-    fn find_entry_point(&self) -> Option<usize> {
-        let key = INTERNER.get("main")?;
-        let main = self.globals.get(&key)?;
-        match main {
-            OldBadValue::Function(pos, _) => Some(*pos),
-            _ => panic!("main is not a function"),
-        }
     }
 
     pub fn run(&mut self) -> ExecuteResult {
@@ -105,62 +110,74 @@ impl<P: Ports> Interpreter<P> {
     }
 
     fn step(&mut self) -> ExecuteResult {
-        let inst = &self.insts[self.ip];
+        let inst = &self.program.insts[self.ip];
         self.ip += 1;
 
-        match inst {
-            OldBadInstruction::PushString(key) => self.push_string(*key)?,
-            OldBadInstruction::Call(argc) => self.call_function(*argc)?,
-            OldBadInstruction::LoadLocal(key) => self.load_local(*key)?,
-            OldBadInstruction::Return => self.executing = false,
-        }
-
-        Ok(())
-    }
-
-    fn load_local(&mut self, key: Spur) -> ExecuteResult {
-        let value = self.globals.get(&key).unwrap();
-        self.stack.push(value.clone());
-        Ok(())
-    }
-
-    fn push_string(&mut self, key: Spur) -> ExecuteResult {
-        let string = resolve_symbol(key).to_owned();
-        self.stack.push(OldBadValue::String(string));
-        Ok(())
-    }
-
-    fn call_function(&mut self, arg_count: u32) -> ExecuteResult {
-        match &self.stack[self.stack.len() - arg_count as usize - 1] {
-            OldBadValue::Builtin(id, argc) => {
-                if *argc != arg_count {
-                    panic!("Calling a nuiltin with incorrect arg count");
-                }
-                let func = self.builtins.get(*id).unwrap().clone();
-                func.call(self).unwrap();
-                self.stack.pop();
-
-                Ok(())
+        match *inst {
+            Instruction::Copy(_, _) => todo!(),
+            Instruction::LoadConstant(idx, Register(reg)) => {
+                self.registers[reg as usize] = self.program.constants[idx as usize].clone();
             }
-            OldBadValue::Function(_, _) => todo!(),
-            x => panic!("Calling a non-function: {:?}", x),
+            Instruction::LoadLocal(idx, Register(reg)) => {
+                // FIXME: This is a temporary hack.
+                let idx = idx as usize + 128;
+                self.registers[reg as usize] = self.registers[idx].clone();
+            }
+            Instruction::StoreLocal(idx, Register(reg)) => {
+                // FIXME: This is a temporary hack.
+                let idx = idx as usize + 128;
+                self.registers[idx] = self.registers[reg as usize].clone();
+            }
+            Instruction::LoadBuiltin(idx, Register(reg)) => {
+                self.registers[reg as usize] = Value::Builtin(idx);
+            }
+            Instruction::IntCmp(Register(a), Register(b)) => {
+                match (&self.registers[a as usize], &self.registers[b as usize]) {
+                    (Value::Int(a), Value::Int(b)) => {
+                        self.compare = a.cmp(b);
+                    }
+                    (a, b) => panic!("Compare between {a:?} and {b:?} unimplemented"),
+                }
+            }
+            Instruction::Equals => {
+                self.registers[0] = Value::Bool(self.compare == Ordering::Equal);
+            }
+            Instruction::Jump(_) => todo!(),
+            Instruction::Branch(if_true, if_false, Register(reg)) => {
+                match &self.registers[reg as usize] {
+                    Value::Bool(true) => self.ip = if_true as usize,
+                    Value::Bool(false) => self.ip = if_false as usize,
+                    x => panic!("Can't branxh on {x:?}"),
+                }
+            }
+            Instruction::Call(Register(reg)) => match &self.registers[reg as usize] {
+                Value::Builtin(idx) => {
+                    let builtin = self.builtins[*idx as usize].clone();
+                    builtin.call(self);
+                }
+                Value::Function(_) => todo!(),
+                x => panic!("Can't call {:?}", x),
+            },
+            Instruction::Return => {
+                self.executing = false;
+            }
+            Instruction::Push(Register(reg)) => {
+                self.stack.push(self.registers[reg as usize].clone());
+            }
+            Instruction::Pop(_) => todo!(),
         }
+
+        Ok(())
     }
 }
 
 impl<P: Ports> LoadBuiltin<P> for Interpreter<P> {
-    fn load_builtin<F, I>(&mut self, name: &str, f: F)
+    fn load_builtin<F, I>(&mut self, _name: &str, f: F)
     where
         F: BuiltinFunction<P, I> + 'static,
         P: 'static,
         I: 'static,
     {
-        let argc = f.arg_count() as u32;
-        let key = INTERNER.get_or_intern(name);
-
         self.builtins.push(Rc::new(BuiltinAdapter::new(f)));
-
-        let id = self.builtins.len() - 1;
-        self.globals.insert(key, OldBadValue::Builtin(id, argc));
     }
 }

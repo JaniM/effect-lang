@@ -53,7 +53,10 @@ impl HlirVisitor for Typechecker {
 
                 VisitAction::Nothing
             }
-            NodeKind::Block(_) => VisitAction::Recurse,
+            NodeKind::Block(_) => {
+                node.ty = Type::Unit;
+                VisitAction::Recurse
+            }
             NodeKind::Literal(lit) => {
                 match lit {
                     Literal::String(_) => {

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use tinyvec::ArrayVec;
 
 use super::{Block, Function, Instruction, Register};
@@ -14,6 +16,7 @@ pub fn simplify_function(func: &mut Function) {
         remove_unnecessary_write(block);
         remove_unnecessary_load(block);
         simplify_registers(block);
+        compact_registers(block);
     }
 }
 
@@ -107,8 +110,8 @@ fn remove_unnecessary_load(block: &mut Block) {
 
     let mut rewrites = Vec::new();
     for (idx, inst) in block.insts.iter().enumerate() {
-        let (local, var) = match inst {
-            Instruction::LoadLocal(idx, var) => (*idx, *var),
+        let var = match inst {
+            Instruction::LoadLocal(_, var) => *var,
             _ => continue,
         };
 
@@ -123,6 +126,61 @@ fn remove_unnecessary_load(block: &mut Block) {
         match rewrite {
             Remove(idx) => {
                 block.insts.remove(idx);
+            }
+        }
+    }
+}
+
+fn compact_registers(block: &mut Block) {
+    enum Rewrite {
+        Substitute(usize, Register, Register),
+    }
+    use Rewrite::*;
+
+    let mut used_registers = HashSet::new();
+    let mut remove_at = vec![];
+
+    let mut rewrites = Vec::new();
+    for (idx, inst) in block.insts.iter().enumerate() {
+        for (remove_at, var) in &remove_at {
+            if idx == *remove_at {
+                used_registers.remove(var);
+                break;
+            }
+        }
+
+        let desc = describe_inst(inst);
+        let var = match desc.writes.last() {
+            Some(w) => *w,
+            None => continue,
+        };
+
+        let start = idx + 1;
+        let scope = resolve_scope(&var, &block.insts, start).unwrap_or(block.insts.len());
+
+        let mut minimal = Register(1);
+        while used_registers.contains(&minimal) {
+            minimal.0 += 1;
+        }
+
+        rewrites.push(Substitute(idx, var, minimal));
+
+        for (idx, inst) in block.insts.iter().enumerate().skip(start).take(scope - idx) {
+            let desc = describe_inst(inst);
+            if desc.reads.contains(&var) {
+                rewrites.push(Substitute(idx, var, minimal));
+            }
+        }
+
+        used_registers.insert(minimal);
+        remove_at.push((scope, minimal));
+    }
+
+    for rewrite in rewrites.into_iter().rev() {
+        match rewrite {
+            Substitute(idx, orig, new) => {
+                let inst = &mut block.insts[idx];
+                replace_regiater(inst, orig, new);
             }
         }
     }
@@ -185,11 +243,18 @@ fn simplify_registers(block: &mut Block) {
 }
 
 fn replace_regiater(inst: &mut Instruction, orig: Register, new: Register) {
+    use Instruction::*;
     match inst {
-        Instruction::Branch(_, _, reg) => {
+        Branch(_, _, reg)
+        | LoadConstant(_, reg)
+        | LoadBuiltin(_, reg)
+        | StoreLocal(_, reg)
+        | LoadLocal(_, reg)
+        | Push(reg)
+        | Call(reg) => {
             *reg = new;
         }
-        Instruction::IntCmp(a, b) => {
+        IntCmp(a, b) => {
             if *a == orig {
                 *a = new;
             }
@@ -197,7 +262,7 @@ fn replace_regiater(inst: &mut Instruction, orig: Register, new: Register) {
                 *b = new;
             }
         }
-        _ => todo!(),
+        _ => todo!("replace_regiater {:?}", inst),
     }
 }
 

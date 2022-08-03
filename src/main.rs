@@ -1,4 +1,5 @@
 #![feature(box_patterns)]
+#![feature(int_log)]
 
 mod bytecode;
 mod hlir;
@@ -9,7 +10,8 @@ mod parser;
 
 use crate::{
     bytecode::{
-        optimize::simplify_function, print_function, Function, FunctionBuilder, FunctionBuilderCtx,
+        optimize::simplify_function, program::Program, Function, FunctionBuilder,
+        FunctionBuilderCtx,
     },
     hlir::{name_resolve::NameResolver, pretty::PrettyPrint, simplify::Simplifier, HlirBuilder},
     hlir::{
@@ -18,7 +20,10 @@ use crate::{
         visitor::HlirVisitor,
         Builtins, FileId,
     },
-    interpreter::standard::{load_standard_builtins, StandardPorts},
+    interpreter::{
+        standard::{load_standard_builtins, StandardPorts},
+        Interpreter,
+    },
     parser::parse,
 };
 use unindent::unindent;
@@ -58,6 +63,7 @@ fn main() {
             if (x == 0) {
                 print("hello");
             }
+            print_int(x);
         }
         "#,
     );
@@ -76,10 +82,12 @@ fn main() {
     NameResolver::new(&builtins).walk_hlir(&mut hlir);
     Typechecker::default().walk_hlir(&mut hlir);
 
-    let mut pretty = PrettyPrint::new(&builtins);
-    pretty.walk_hlir(&mut hlir);
-    println!("HIR:");
-    print_fragments(&pretty.fragments);
+    {
+        let mut pretty = PrettyPrint::new(&builtins);
+        pretty.walk_hlir(&mut hlir);
+        println!("HIR:");
+        print_fragments(&pretty.fragments);
+    }
 
     report_unknown_types(&mut hlir);
 
@@ -89,8 +97,15 @@ fn main() {
     let mut ctx = FunctionBuilderCtx::default();
     let mut func = Function::default();
     FunctionBuilder::new(&mut func, &mut ctx).build_fndef(fndef);
+
     simplify_function(&mut func);
 
     println!("\nBytecode: ");
-    print_function(&func, &ctx);
+    let program = Program::from_hlir(&hlir);
+    program.print();
+
+    let mut interpreter = Interpreter::<StandardPorts>::new(program).with_stdout(std::io::stdout());
+    load_standard_builtins(&mut interpreter);
+    println!("\nOutput:");
+    interpreter.run().unwrap();
 }

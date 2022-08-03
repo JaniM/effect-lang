@@ -1,6 +1,6 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, rc::Rc};
 
-use crate::{bytecode::OldBadValue, hlir::Type};
+use crate::{bytecode::Value, hlir::Type};
 
 use super::{Interpreter, Ports};
 
@@ -9,10 +9,10 @@ trait Extract: Sized {
     fn extract_type() -> Type;
 }
 
-impl Extract for String {
+impl Extract for Rc<String> {
     fn extract<P: Ports>(interpreter: &mut Interpreter<P>) -> Option<Self> {
         match interpreter.stack.pop().unwrap() {
-            OldBadValue::String(x) => Some(x),
+            Value::String(x) => Some(x),
             x => {
                 interpreter.stack.push(x);
                 None
@@ -22,6 +22,22 @@ impl Extract for String {
 
     fn extract_type() -> Type {
         Type::String
+    }
+}
+
+impl Extract for i64 {
+    fn extract<P: Ports>(interpreter: &mut Interpreter<P>) -> Option<Self> {
+        match interpreter.stack.pop().unwrap() {
+            Value::Int(x) => Some(x),
+            x => {
+                interpreter.stack.push(x);
+                None
+            }
+        }
+    }
+
+    fn extract_type() -> Type {
+        Type::Int
     }
 }
 
