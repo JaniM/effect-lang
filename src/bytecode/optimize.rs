@@ -38,7 +38,7 @@ fn remove_unnecessary_write(block: &mut Block) {
         }
 
         let start = idx + 1;
-        let scope = resolve_write_scope(&var, &block.insts, start).unwrap_or(block.insts.len());
+        let scope = resolve_local_write_scope(local, &block.insts, start).unwrap_or(block.insts.len() - 1);
 
         let mut read = false;
         for inst in block.insts[start..=scope].iter() {
@@ -47,7 +47,7 @@ fn remove_unnecessary_write(block: &mut Block) {
                     read = true;
                     break;
                 }
-                Instruction::StoreLocal(_, _) => unreachable!(),
+                Instruction::StoreLocal(loc, _) if *loc == local => unreachable!(),
                 _ => continue,
             }
         }
@@ -80,14 +80,14 @@ fn replace_load_with_copy(block: &mut Block) {
         };
 
         let start = idx + 1;
-        let scope = resolve_write_scope(&var, &block.insts, start).unwrap_or(block.insts.len());
+        let scope = resolve_write_scope(&var, &block.insts, start).unwrap_or(block.insts.len() - 1);
 
         for (idx, inst) in block.insts[start..=scope].iter().enumerate() {
             match inst {
                 Instruction::LoadLocal(loc, reg) if *loc == local => {
                     rewrites.push(Substitute(idx + start, Instruction::Copy(var, *reg)));
                 }
-                Instruction::StoreLocal(_, _) => unreachable!(),
+                Instruction::StoreLocal(loc, _) if *loc == local => unreachable!(),
                 _ => continue,
             }
         }
@@ -283,12 +283,24 @@ fn resolve_scope(var: &Register, insts: &[Instruction], start: usize) -> Option<
 }
 
 /// Finds the index where this variable is replaced.
-/// Returns `None` if the variable is written to before it's used.
+/// Returns `None` if the variable is never written to.
 fn resolve_write_scope(var: &Register, insts: &[Instruction], start: usize) -> Option<usize> {
     for (idx, inst) in insts.iter().enumerate().skip(start) {
         let desc = describe_inst(inst);
         if desc.writes.contains(var) {
             return Some(idx - 1);
+        }
+    }
+    None
+}
+
+/// Finds the index where this local is replaced.
+/// Returns `None` if the local is never written to.
+fn resolve_local_write_scope(local: u32, insts: &[Instruction], start: usize) -> Option<usize> {
+    for (idx, inst) in insts.iter().enumerate().skip(start) {
+        match inst {
+            Instruction::StoreLocal(loc, _) if *loc == local => return Some(idx - 1),
+            _ => {}
         }
     }
     None

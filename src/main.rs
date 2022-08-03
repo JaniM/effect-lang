@@ -11,7 +11,7 @@ mod parser;
 use crate::{
     bytecode::{
         optimize::simplify_function, program::Program, Function, FunctionBuilder,
-        FunctionBuilderCtx,
+        FunctionBuilderCtx, print_function,
     },
     hlir::{name_resolve::NameResolver, pretty::PrettyPrint, simplify::Simplifier, HlirBuilder},
     hlir::{
@@ -59,11 +59,12 @@ fn main() {
     let source = unindent(
         r#"
         fn main() {
+            let y = 2;
             let x = 0;
-            if (x == 0) {
+            if (y == 2) {
                 print("hello");
             }
-            print_int(x);
+            print("world");
         }
         "#,
     );
@@ -98,6 +99,7 @@ fn main() {
     let mut func = Function::default();
     FunctionBuilder::new(&mut func, &mut ctx).build_fndef(fndef);
 
+    print_function(&func, &ctx);
     simplify_function(&mut func);
 
     println!("\nBytecode: ");

@@ -114,7 +114,9 @@ impl<P: Ports> Interpreter<P> {
         self.ip += 1;
 
         match *inst {
-            Instruction::Copy(_, _) => todo!(),
+            Instruction::Copy(Register(from), Register(to)) => {
+                self.registers[to as usize] = self.registers[from as usize].clone();
+            },
             Instruction::LoadConstant(idx, Register(reg)) => {
                 self.registers[reg as usize] = self.program.constants[idx as usize].clone();
             }

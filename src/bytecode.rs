@@ -95,6 +95,7 @@ pub struct FunctionBuilder<'a> {
     current_block: usize,
     out_registers: Vec<Register>,
     occupied_registers: Vec<Register>,
+    register_counter: usize,
     locals: Vec<Spur>,
 }
 
@@ -132,6 +133,7 @@ impl<'a> FunctionBuilder<'a> {
             current_block: 0,
             out_registers: Default::default(),
             occupied_registers: Default::default(),
+            register_counter: 0,
             locals: Default::default(),
         }
     }
@@ -218,12 +220,14 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn next_reg(&mut self) -> Register {
-        let mut reg = Register(1);
-        while self.occupied_registers.contains(&reg) {
-            reg.0 += 1;
-        }
-        self.occupied_registers.push(reg);
-        reg
+        // let mut reg = Register(1);
+        // while self.occupied_registers.contains(&reg) {
+        //     reg.0 += 1;
+        // }
+        // self.occupied_registers.push(reg);
+        // reg
+        self.register_counter += 1;
+        Register(self.register_counter as u8)
     }
 
     fn release_reg(&mut self, reg: Register) {
@@ -348,6 +352,7 @@ impl HlirVisitorImmut for FunctionBuilder<'_> {
                     .rev()
                     .position(|x| x == name)
                     .expect("Name not found");
+                let idx = self.locals.len() - idx - 1;
 
                 let out = self.out_reg();
                 self.inst(Instruction::LoadLocal(idx as _, out));
