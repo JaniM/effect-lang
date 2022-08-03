@@ -28,8 +28,8 @@ fn remove_unnecessary_write(block: &mut Block<usize>) {
 
     let mut rewrites = Vec::new();
     for (idx, inst) in block.insts.iter().enumerate().rev() {
-        let (local, var) = match inst {
-            Instruction::StoreLocal(idx, var) => (*idx, *var),
+        let local = match inst {
+            Instruction::StoreLocal(idx, _) => *idx,
             _ => continue,
         };
 
@@ -230,14 +230,17 @@ fn simplify_registers(block: &mut Block<usize>) {
         }
     }
 
+    let mut removed_indices = Vec::new();
     for rewrite in rewrites {
         match rewrite {
             Substitute(idx, orig, new) => {
-                let inst = &mut block.insts[idx];
+                let offset = removed_indices.iter().filter(|x| **x < idx).count();
+                let inst = &mut block.insts[idx - offset];
                 replace_regiater(inst, orig, new);
             }
             Remove(idx) => {
                 block.insts.remove(idx);
+                removed_indices.push(idx);
             }
         }
     }
@@ -256,7 +259,7 @@ fn replace_regiater(inst: &mut Instruction<usize>, orig: Register<usize>, new: R
         | Equals(reg) => {
             *reg = new;
         }
-        IntCmp(a, b) => {
+        IntCmp(a, b) | Copy(a, b) => {
             if *a == orig {
                 *a = new;
             }

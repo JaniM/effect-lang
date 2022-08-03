@@ -60,11 +60,10 @@ fn main() {
         r#"
         fn main() {
             let y = 2;
-            let x = 0;
-            if (y == 2) {
+            let x = y;
+            if (y == x) {
                 print("hello");
             }
-            print_int(x);
         }
         "#,
     );
@@ -100,7 +99,7 @@ fn main() {
     let mut func = Function::default();
     FunctionBuilder::new(&mut func, &mut ctx).build_fndef(fndef);
 
-    // print_function(&func, &ctx);
+    print_function(&func, &ctx);
     simplify_function(&mut func);
 
     println!("\nBytecode: ");
