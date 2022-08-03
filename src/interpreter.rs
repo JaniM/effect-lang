@@ -116,7 +116,7 @@ impl<P: Ports> Interpreter<P> {
         match *inst {
             Instruction::Copy(Register(from), Register(to)) => {
                 self.registers[to as usize] = self.registers[from as usize].clone();
-            },
+            }
             Instruction::LoadConstant(idx, Register(reg)) => {
                 self.registers[reg as usize] = self.program.constants[idx as usize].clone();
             }
@@ -141,8 +141,8 @@ impl<P: Ports> Interpreter<P> {
                     (a, b) => panic!("Compare between {a:?} and {b:?} unimplemented"),
                 }
             }
-            Instruction::Equals => {
-                self.registers[0] = Value::Bool(self.compare == Ordering::Equal);
+            Instruction::Equals(Register(reg)) => {
+                self.registers[reg] = Value::Bool(self.compare == Ordering::Equal);
             }
             Instruction::Jump(_) => todo!(),
             Instruction::Branch(if_true, if_false, Register(reg)) => {

@@ -32,69 +32,66 @@ impl Default for Value {
     }
 }
 
+type DefaultReg = usize;
+
 /// Represents register indices.
 /// Register 0 is the accumulator, which is alwayx the result of the previous operation.
 #[derive(Clone, Copy, Debug, DebugPls, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[repr(transparent)]
-pub struct Register(pub u8);
+pub struct Register<T = DefaultReg>(pub T);
 
-impl Register {
-    const ACC: Register = Register(0);
-}
-
-impl Display for Register {
+impl<T: Display> Display for Register<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "%{}", self.0)
+        f.pad(&format!("%{}", self.0))
     }
 }
 
 #[derive(Clone, Copy, Debug, DebugPls, PartialEq)]
-pub enum Instruction {
-    Copy(Register, Register),
+pub enum Instruction<T = DefaultReg> {
+    Copy(Register<T>, Register<T>),
     /// Loads a constant at idx to register.
-    LoadConstant(u32, Register),
+    LoadConstant(u32, Register<T>),
     /// Loads a local at idx to register.
-    LoadLocal(u32, Register),
+    LoadLocal(u32, Register<T>),
     /// Stores a local from register to idx.
-    StoreLocal(u32, Register),
+    StoreLocal(u32, Register<T>),
     /// Loads a builtin at idx to register.
-    LoadBuiltin(u32, Register),
+    LoadBuiltin(u32, Register<T>),
     /// Compares registers and sets the comparison flag accordingly,
-    IntCmp(Register, Register),
+    IntCmp(Register<T>, Register<T>),
     /// Set the accumulator to true if the comparison flag is Equal.
-    Equals,
+    Equals(Register<T>),
     /// Unconditional jump to index.
     Jump(u32),
     /// Jump left if the register is true and otherwise jump right.
-    Branch(u32, u32, Register),
+    Branch(u32, u32, Register<T>),
     /// Calls the function loaded in register.
-    Call(Register),
+    Call(Register<T>),
     Return,
-    Push(Register),
-    Pop(Register),
+    Push(Register<T>),
+    Pop(Register<T>),
 }
 
 /// Represents a linear sequence of operations. Can only have exactly one jump, at the end of the
 /// block.
 #[derive(Debug, DebugPls, Default, PartialEq)]
-pub struct Block {
-    insts: Vec<Instruction>,
+pub struct Block<T = DefaultReg> {
+    insts: Vec<Instruction<T>>,
     inputs: Vec<u32>,
     outputs: Vec<u32>,
 }
 
 #[derive(Debug, DebugPls, Default, PartialEq)]
-pub struct Function {
-    blocks: Vec<Block>,
+pub struct Function<T> {
+    blocks: Vec<Block<T>>,
 }
 
 #[derive(Debug)]
-pub struct FunctionBuilder<'a> {
-    func: &'a mut Function,
+pub struct FunctionBuilder<'a, T> {
+    func: &'a mut Function<T>,
     ctx: &'a mut FunctionBuilderCtx,
     current_block: usize,
-    out_registers: Vec<Register>,
-    occupied_registers: Vec<Register>,
+    out_registers: Vec<Register<T>>,
     register_counter: usize,
     locals: Vec<Spur>,
 }
@@ -104,7 +101,7 @@ pub struct FunctionBuilderCtx {
     constants: Vec<Value>,
 }
 
-impl Block {
+impl<T> Block<T> {
     fn resolve_inputs(&self) -> Vec<u32> {
         let mut written = HashSet::new();
         let mut unbound = HashSet::new();
@@ -125,14 +122,13 @@ impl Block {
     }
 }
 
-impl<'a> FunctionBuilder<'a> {
-    pub fn new(func: &'a mut Function, ctx: &'a mut FunctionBuilderCtx) -> Self {
+impl<'a> FunctionBuilder<'a, usize> {
+    pub fn new(func: &'a mut Function<usize>, ctx: &'a mut FunctionBuilderCtx) -> Self {
         FunctionBuilder {
             func,
             ctx,
             current_block: 0,
             out_registers: Default::default(),
-            occupied_registers: Default::default(),
             register_counter: 0,
             locals: Default::default(),
         }
@@ -193,7 +189,7 @@ impl<'a> FunctionBuilder<'a> {
         self.current_block = block as usize;
     }
 
-    fn inst(&mut self, inst: Instruction) {
+    fn inst(&mut self, inst: Instruction<usize>) {
         self.func.blocks[self.current_block].insts.push(inst);
     }
 
@@ -206,42 +202,31 @@ impl<'a> FunctionBuilder<'a> {
         self.ctx.constants.len() as u32 - 1
     }
 
-    fn set_out_reg(&mut self, reg: Register) -> Register {
+    fn set_out_reg(&mut self, reg: Register<usize>) {
         self.out_registers.push(reg);
-        reg
     }
 
     fn pop_out_reg(&mut self) {
         self.out_registers.pop().expect("No out registers set");
     }
 
-    fn out_reg(&self) -> Register {
+    fn out_reg(&self) -> Register<usize> {
         *self.out_registers.last().expect("No out registers set")
     }
 
-    fn next_reg(&mut self) -> Register {
-        // let mut reg = Register(1);
-        // while self.occupied_registers.contains(&reg) {
-        //     reg.0 += 1;
-        // }
-        // self.occupied_registers.push(reg);
-        // reg
+    fn next_reg(&mut self) -> Register<usize> {
         self.register_counter += 1;
-        Register(self.register_counter as u8)
+        Register(self.register_counter)
     }
 
-    fn release_reg(&mut self, reg: Register) {
-        self.occupied_registers.retain(|x| x != &reg);
-    }
-
-    fn walk_with_out(&mut self, out: Register, node: &Node) {
+    fn walk_with_out(&mut self, out: Register<usize>, node: &Node) {
         self.set_out_reg(out);
         self.walk_node(node);
         self.pop_out_reg();
     }
 }
 
-impl HlirVisitorImmut for FunctionBuilder<'_> {
+impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
     fn visit_node(&mut self, node: &Node) -> VisitAction {
         match &node.kind {
             NodeKind::Let { name, value, expr } => {
@@ -250,7 +235,6 @@ impl HlirVisitorImmut for FunctionBuilder<'_> {
 
                 let idx = self.locals.len();
                 self.inst(Instruction::StoreLocal(idx as _, reg));
-                self.release_reg(reg);
 
                 self.locals.push(*name);
                 self.walk_node(expr);
@@ -268,12 +252,8 @@ impl HlirVisitorImmut for FunctionBuilder<'_> {
                 let out = self.out_reg();
                 self.inst(Instruction::IntCmp(left_reg, right_reg));
                 match op {
-                    BinopKind::Equals => self.inst(Instruction::Equals),
+                    BinopKind::Equals => self.inst(Instruction::Equals(out)),
                 }
-                self.inst(Instruction::Copy(Register::ACC, out));
-
-                self.release_reg(right_reg);
-                self.release_reg(left_reg);
 
                 VisitAction::Nothing
             }
@@ -288,10 +268,8 @@ impl HlirVisitorImmut for FunctionBuilder<'_> {
                     self.inst(Instruction::Push(reg));
                 }
                 self.pop_out_reg();
-                self.release_reg(reg);
 
                 self.inst(Instruction::Call(func));
-                self.release_reg(func);
 
                 match callee.ty {
                     Type::Function {
@@ -318,7 +296,6 @@ impl HlirVisitorImmut for FunctionBuilder<'_> {
                 let cond_reg = self.next_reg();
                 self.walk_with_out(cond_reg, cond);
                 self.inst(Instruction::Branch(true_block, end_block, cond_reg));
-                self.release_reg(cond_reg);
 
                 self.switch_block(true_block);
                 self.walk_node(if_true);
@@ -368,13 +345,14 @@ impl HlirVisitorImmut for FunctionBuilder<'_> {
     }
 }
 
-fn print_inst(inst: &Instruction, consts: &Vec<Value>) {
-    print!("  ");
+fn print_inst(inst: &Instruction<usize>, consts: &Vec<Value>) {
+    let pad: usize = 4;
+    let spad = pad + 3;
     match inst {
-        Instruction::Copy(from, to) => println!("{to} = {from}"),
+        Instruction::Copy(from, to) => println!("{to:>pad$} = {from}"),
         Instruction::LoadConstant(idx, reg) => {
             println!(
-                "{reg} = const {idx} ({})",
+                "{reg:>pad$} = const {idx} ({})",
                 match &consts[*idx as usize] {
                     Value::Builtin(_) => todo!(),
                     Value::Function(_) => todo!(),
@@ -385,23 +363,23 @@ fn print_inst(inst: &Instruction, consts: &Vec<Value>) {
                 }
             );
         }
-        Instruction::LoadLocal(idx, reg) => println!("{reg} = local {idx}"),
-        Instruction::StoreLocal(idx, reg) => println!("local {idx} = {reg}"),
-        Instruction::LoadBuiltin(idx, reg) => println!("{reg} = builtin {idx}"),
-        Instruction::IntCmp(a, b) => println!("{} = cmp {a}, {b}", Register::ACC),
-        Instruction::Equals => println!("{} = equals", Register::ACC),
-        Instruction::Jump(addr) => println!("jump #{addr}"),
+        Instruction::LoadLocal(idx, reg) => println!("{reg:>pad$} = local {idx}"),
+        Instruction::StoreLocal(idx, reg) => println!("{:>spad$}store {idx}, {reg}", ""),
+        Instruction::LoadBuiltin(idx, reg) => println!("{reg:>pad$} = builtin {idx}"),
+        Instruction::Equals(reg) => println!("{reg:>pad$} = equals"),
+        Instruction::IntCmp(a, b) => println!("{:>spad$}cmp {a}, {b}", ""),
+        Instruction::Jump(addr) => println!("{:>spad$}jump #{addr}", ""),
         Instruction::Branch(true_addr, false_addr, reg) => {
-            println!("branch #{true_addr}, #{false_addr} on {reg}");
+            println!("{:>spad$}branch #{true_addr}, #{false_addr} on {reg}", "");
         }
-        Instruction::Call(reg) => println!("call {reg}"),
-        Instruction::Return => println!("ret"),
-        Instruction::Push(reg) => println!("push {reg}"),
-        Instruction::Pop(reg) => println!("{reg} = pop"),
+        Instruction::Call(reg) => println!("{:>spad$}call {reg}", ""),
+        Instruction::Return => println!("{:>spad$}ret", ""),
+        Instruction::Push(reg) => println!("{:>spad$}push {reg}", ""),
+        Instruction::Pop(reg) => println!("{reg:>pad$} = pop"),
     }
 }
 
-pub fn print_function(func: &Function, ctx: &FunctionBuilderCtx) {
+pub fn print_function(func: &Function<usize>, ctx: &FunctionBuilderCtx) {
     for (idx, block) in func.blocks.iter().enumerate() {
         println!(
             "block {idx} ({})",
@@ -483,8 +461,8 @@ mod test {
                             LoadConstant(0, Register(1)),
                             LoadConstant(0, Register(2)),
                             IntCmp(Register(1), Register(2)),
-                            Equals,
-                            Branch(1, 2, Register(0))
+                            Equals(Register(1)),
+                            Branch(1, 2, Register(1))
                         ],
                         outputs: vec![],
                         inputs: vec![],

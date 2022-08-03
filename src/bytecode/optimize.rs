@@ -5,12 +5,12 @@ use tinyvec::ArrayVec;
 use super::{Block, Function, Instruction, Register};
 
 #[derive(Debug)]
-pub struct InstDesc {
-    pub reads: ArrayVec<[Register; 2]>,
-    pub writes: ArrayVec<[Register; 2]>,
+pub struct InstDesc<T: Default> {
+    pub reads: ArrayVec<[Register<T>; 2]>,
+    pub writes: ArrayVec<[Register<T>; 2]>,
 }
 
-pub fn simplify_function(func: &mut Function) {
+pub fn simplify_function(func: &mut Function<usize>) {
     for block in func.blocks.iter_mut() {
         replace_load_with_copy(block);
         remove_unnecessary_write(block);
@@ -20,7 +20,7 @@ pub fn simplify_function(func: &mut Function) {
     }
 }
 
-fn remove_unnecessary_write(block: &mut Block) {
+fn remove_unnecessary_write(block: &mut Block<usize>) {
     enum Rewrite {
         Remove(usize),
     }
@@ -38,7 +38,8 @@ fn remove_unnecessary_write(block: &mut Block) {
         }
 
         let start = idx + 1;
-        let scope = resolve_local_write_scope(local, &block.insts, start).unwrap_or(block.insts.len() - 1);
+        let scope =
+            resolve_local_write_scope(local, &block.insts, start).unwrap_or(block.insts.len() - 1);
 
         let mut read = false;
         for inst in block.insts[start..=scope].iter() {
@@ -66,9 +67,9 @@ fn remove_unnecessary_write(block: &mut Block) {
     }
 }
 
-fn replace_load_with_copy(block: &mut Block) {
+fn replace_load_with_copy(block: &mut Block<usize>) {
     enum Rewrite {
-        Substitute(usize, Instruction),
+        Substitute(usize, Instruction<usize>),
     }
     use Rewrite::*;
 
@@ -102,7 +103,7 @@ fn replace_load_with_copy(block: &mut Block) {
     }
 }
 
-fn remove_unnecessary_load(block: &mut Block) {
+fn remove_unnecessary_load(block: &mut Block<usize>) {
     enum Rewrite {
         Remove(usize),
     }
@@ -131,9 +132,9 @@ fn remove_unnecessary_load(block: &mut Block) {
     }
 }
 
-fn compact_registers(block: &mut Block) {
+fn compact_registers(block: &mut Block<usize>) {
     enum Rewrite {
-        Substitute(usize, Register, Register),
+        Substitute(usize, Register<usize>, Register<usize>),
     }
     use Rewrite::*;
 
@@ -156,7 +157,7 @@ fn compact_registers(block: &mut Block) {
         };
 
         let start = idx + 1;
-        let scope = resolve_scope(&var, &block.insts, start).unwrap_or(block.insts.len());
+        let scope = resolve_scope(&var, &block.insts, start).unwrap_or(start);
 
         let mut minimal = Register(1);
         while used_registers.contains(&minimal) {
@@ -186,9 +187,9 @@ fn compact_registers(block: &mut Block) {
     }
 }
 
-fn simplify_registers(block: &mut Block) {
+fn simplify_registers(block: &mut Block<usize>) {
     enum Rewrite {
-        Substitute(usize, Register, Register),
+        Substitute(usize, Register<usize>, Register<usize>),
         Remove(usize),
     }
     use Rewrite::*;
@@ -242,7 +243,7 @@ fn simplify_registers(block: &mut Block) {
     }
 }
 
-fn replace_regiater(inst: &mut Instruction, orig: Register, new: Register) {
+fn replace_regiater(inst: &mut Instruction<usize>, orig: Register<usize>, new: Register<usize>) {
     use Instruction::*;
     match inst {
         Branch(_, _, reg)
@@ -251,7 +252,8 @@ fn replace_regiater(inst: &mut Instruction, orig: Register, new: Register) {
         | StoreLocal(_, reg)
         | LoadLocal(_, reg)
         | Push(reg)
-        | Call(reg) => {
+        | Call(reg)
+        | Equals(reg) => {
             *reg = new;
         }
         IntCmp(a, b) => {
@@ -296,7 +298,11 @@ fn resolve_write_scope(var: &Register, insts: &[Instruction], start: usize) -> O
 
 /// Finds the index where this local is replaced.
 /// Returns `None` if the local is never written to.
-fn resolve_local_write_scope(local: u32, insts: &[Instruction], start: usize) -> Option<usize> {
+fn resolve_local_write_scope<T>(
+    local: u32,
+    insts: &[Instruction<T>],
+    start: usize,
+) -> Option<usize> {
     for (idx, inst) in insts.iter().enumerate().skip(start) {
         match inst {
             Instruction::StoreLocal(loc, _) if *loc == local => return Some(idx - 1),
@@ -306,7 +312,7 @@ fn resolve_local_write_scope(local: u32, insts: &[Instruction], start: usize) ->
     None
 }
 
-pub fn describe_inst(inst: &Instruction) -> InstDesc {
+pub fn describe_inst<T: Default + Copy>(inst: &Instruction<T>) -> InstDesc<T> {
     let mut reads = ArrayVec::default();
     let mut writes = ArrayVec::default();
 
@@ -331,7 +337,9 @@ pub fn describe_inst(inst: &Instruction) -> InstDesc {
             reads.push(*a);
             reads.push(*b);
         }
-        Instruction::Equals => {}
+        Instruction::Equals(reg) => {
+            writes.push(*reg);
+        }
         Instruction::Jump(_) => {}
         Instruction::Branch(_, _, reg) => {
             reads.push(*reg);

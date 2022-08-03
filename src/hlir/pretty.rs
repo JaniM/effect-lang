@@ -101,6 +101,7 @@ impl HlirVisitorImmut for PrettyPrint<'_, '_> {
         self.indent();
         self.walk_node(body);
         self.dedent();
+        self.hard_break();
 
         VisitAction::Nothing
     }

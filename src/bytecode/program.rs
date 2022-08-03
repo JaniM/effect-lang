@@ -12,14 +12,14 @@ use super::{
 
 #[derive(Debug, DebugPls)]
 pub struct Program {
-    pub insts: Vec<Instruction>,
+    pub insts: Vec<Instruction<usize>>,
     pub constants: Vec<Value>,
     pub entrypoint: usize,
 }
 
 #[derive(Default)]
 struct ProgramBuilder {
-    insts: Vec<Instruction>,
+    insts: Vec<Instruction<usize>>,
     ctx: FunctionBuilderCtx,
     entrypoint: usize,
 }
@@ -43,7 +43,7 @@ impl Program {
 
     pub fn print(&self) {
         for (idx, inst) in self.insts.iter().enumerate() {
-            print!("  #{idx}{}", " ".repeat(3 - idx.max(1).log10() as usize));
+            print!("  #{idx:<3}");
             print_inst(inst, &self.constants);
         }
     }

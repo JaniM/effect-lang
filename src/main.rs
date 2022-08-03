@@ -10,8 +10,8 @@ mod parser;
 
 use crate::{
     bytecode::{
-        optimize::simplify_function, program::Program, Function, FunctionBuilder,
-        FunctionBuilderCtx, print_function,
+        optimize::simplify_function, print_function, program::Program, Function, FunctionBuilder,
+        FunctionBuilderCtx,
     },
     hlir::{name_resolve::NameResolver, pretty::PrettyPrint, simplify::Simplifier, HlirBuilder},
     hlir::{
@@ -64,7 +64,7 @@ fn main() {
             if (y == 2) {
                 print("hello");
             }
-            print("world");
+            print_int(x);
         }
         "#,
     );
@@ -88,6 +88,7 @@ fn main() {
         pretty.walk_hlir(&mut hlir);
         println!("HIR:");
         print_fragments(&pretty.fragments);
+        println!();
     }
 
     report_unknown_types(&mut hlir);
@@ -99,7 +100,7 @@ fn main() {
     let mut func = Function::default();
     FunctionBuilder::new(&mut func, &mut ctx).build_fndef(fndef);
 
-    print_function(&func, &ctx);
+    // print_function(&func, &ctx);
     simplify_function(&mut func);
 
     println!("\nBytecode: ");
