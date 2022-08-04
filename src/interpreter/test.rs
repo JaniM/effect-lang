@@ -2,6 +2,8 @@
 
 use std::io::Cursor;
 
+use unindent::unindent;
+
 use super::{standard::load_standard_builtins, *};
 
 struct TestPorts;
@@ -28,4 +30,25 @@ fn hello_world() {
     interpreter.run().unwrap();
 
     assert_eq!(interpreter.stdout.unwrap().get_ref(), b"hello\n");
+}
+
+#[test]
+fn unit_fn_call() {
+    let source = unindent(
+        r#"
+        fn main() {
+            func("a", "b");
+            func("c", "d");
+        }
+        fn func(a, b) {
+            print(a);
+            print(b);
+        }"#,
+    );
+
+    let mut interpreter = test_interpreter(&source);
+    interpreter.program.print();
+    interpreter.run().unwrap();
+
+    assert_eq!(interpreter.stdout.unwrap().get_ref(), b"a\nb\nc\nd\n");
 }

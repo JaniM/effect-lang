@@ -170,6 +170,7 @@ impl<'a> FunctionBuilder<'a, usize> {
             block.inputs = inputs;
         }
 
+        // Resolve block outputs
         for block in self.func.blocks.iter_mut() {
             match block.insts.last() {
                 Some(Instruction::Jump(idx)) => {
@@ -190,6 +191,7 @@ impl<'a> FunctionBuilder<'a, usize> {
             }
         }
 
+        // Deduplicate outputs.
         for block in self.func.blocks.iter_mut() {
             block.outputs = block
                 .outputs
@@ -250,6 +252,21 @@ impl<'a> FunctionBuilder<'a, usize> {
 }
 
 impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
+    fn visit_function(&mut self, function: &FnDef) -> VisitAction {
+        // Collect arguments in reverse order, as the last arg is on top.
+        for arg in function.arguments.iter().rev() {
+            let reg = self.next_reg();
+            self.inst(Instruction::Pop(reg));
+
+            let idx = self.locals.len();
+            self.inst(Instruction::StoreLocal(idx as _, reg));
+
+            self.locals.push(arg.name);
+        }
+
+        VisitAction::Recurse
+    }
+
     fn visit_node(&mut self, node: &Node) -> VisitAction {
         match &node.kind {
             NodeKind::Let { name, value, expr } => {

@@ -4,15 +4,8 @@ use lasso::Spur;
 
 use super::{
     visitor::{HlirVisitor, VisitAction},
-    Builtins, FunctionId, NodeKind, Type,
+    Builtins, FnHeader, NodeKind,
 };
-
-#[derive(Debug)]
-pub struct FnHeader {
-    pub id: FunctionId,
-    pub name: Option<Spur>,
-    pub ty: Type,
-}
 
 pub struct NameResolver<'a> {
     builtins: &'a Builtins,
@@ -39,19 +32,7 @@ impl HlirVisitor for NameResolver<'_> {
         self.global = module
             .functions
             .values()
-            .filter_map(|v| {
-                Some((
-                    v.name?,
-                    FnHeader {
-                        id: v.id,
-                        name: v.name,
-                        ty: Type::Function {
-                            inputs: vec![],
-                            output: Type::Unit.into(),
-                        },
-                    },
-                ))
-            })
+            .filter_map(|v| Some((v.header.name?, v.header.clone())))
             .collect();
 
         VisitAction::Recurse

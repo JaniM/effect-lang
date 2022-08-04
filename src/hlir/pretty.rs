@@ -1,16 +1,12 @@
 use std::{borrow::Cow, collections::HashMap};
 
-use lasso::Spur;
-
 use crate::{
     hlir::{visitor::VisitAction, Literal},
     intern::resolve_symbol,
     parser::BinopKind,
 };
 
-use super::{
-    name_resolve::FnHeader, visitor::HlirVisitorImmut, Builtins, FnDef, FunctionId, NodeKind, Type,
-};
+use super::{visitor::HlirVisitorImmut, Builtins, FnDef, FnHeader, FunctionId, NodeKind, Type};
 
 #[derive(Debug)]
 pub enum Fragment<'a> {
@@ -88,19 +84,7 @@ impl HlirVisitorImmut for PrettyPrint<'_, '_> {
         self.global = module
             .functions
             .values()
-            .filter_map(|v| {
-                Some((
-                    v.id,
-                    FnHeader {
-                        id: v.id,
-                        name: v.name,
-                        ty: Type::Function {
-                            inputs: vec![],
-                            output: Type::Unit.into(),
-                        },
-                    },
-                ))
-            })
+            .filter_map(|v| Some((v.header.id, v.header.clone())))
             .collect();
 
         self.text(format!("Module #{}", module.id.0));
@@ -110,15 +94,25 @@ impl HlirVisitorImmut for PrettyPrint<'_, '_> {
 
     fn visit_function(&mut self, function: &FnDef) -> VisitAction {
         let FnDef {
-            id,
-            name,
+            header: FnHeader { id, name, .. },
             return_ty,
             body,
-            ..
+            arguments,
         } = function;
 
         let name = name.map_or("<unnamed>", resolve_symbol);
-        self.text(format!("fn {} #{} () -> ", name, id.0));
+        self.text(format!("fn {} #{} (", name, id.0));
+
+        for (i, arg) in arguments.iter().enumerate() {
+            self.text(resolve_symbol(arg.name));
+            self.text(": ");
+            self.format_type(&arg.ty);
+            if i < arguments.len() - 1 {
+                self.text(", ");
+            }
+        }
+
+        self.text(") -> ");
         self.format_type(return_ty);
         self.hard_break();
 

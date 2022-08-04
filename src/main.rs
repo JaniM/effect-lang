@@ -59,11 +59,11 @@ fn main() {
     let source = unindent(
         r#"
         fn main() {
-            let f = wow;
-            f();
+            wow("first", "second");
         }
-        fn wow() {
-            print("wow");
+        fn wow(a, b) {
+            print(a);
+            print(b);
         }
         "#,
     );
@@ -92,15 +92,15 @@ fn main() {
 
     report_unknown_types(&mut hlir);
 
-    // let module = hlir.modules.get(&hlir::ModuleId(0)).unwrap();
-    // let mut ctx = FunctionBuilderCtx::default();
-    // for fndef in module.functions.values() {
-    //     let mut func = Function::default();
-    //     FunctionBuilder::new(&mut func, &mut ctx).build_fndef(fndef);
-    //     print_function(&func, &ctx);
-    //     simplify_function(&mut func);
-    //     // print_function(&func, &ctx);
-    // }
+    let module = hlir.modules.get(&hlir::ModuleId(0)).unwrap();
+    let mut ctx = FunctionBuilderCtx::default();
+    for fndef in module.functions.values() {
+        let mut func = Function::default();
+        FunctionBuilder::new(&mut func, &mut ctx).build_fndef(fndef);
+        print_function(&func, &ctx);
+        simplify_function(&mut func);
+        // print_function(&func, &ctx);
+    }
 
     println!("\nBytecode: ");
     let program = Program::from_hlir(&hlir);

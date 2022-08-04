@@ -200,7 +200,10 @@ impl<P: Ports> Interpreter<P> {
             Instruction::Push(Register(reg)) => {
                 self.stack.push(self.frame.registers[reg as usize].clone());
             }
-            Instruction::Pop(_) => todo!(),
+            Instruction::Pop(Register(reg)) => {
+                let value = self.stack.pop().expect("Pop on empty stack");
+                self.frame.registers[reg as usize] = value;
+            }
         }
 
         Ok(())

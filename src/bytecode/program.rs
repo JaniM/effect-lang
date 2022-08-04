@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use dbg_pls::DebugPls;
+use lasso::Spur;
 
 use crate::{
     hlir::{FnDef, FunctionId, Hlir, Module},
@@ -12,11 +12,12 @@ use super::{
     Instruction, Register, Value,
 };
 
-#[derive(Debug, DebugPls)]
+#[derive(Debug)]
 pub struct Program {
     pub insts: Vec<Instruction<u8>>,
     pub constants: Vec<Value>,
     pub entrypoint: usize,
+    function_names: HashMap<usize, Option<Spur>>,
 }
 
 #[derive(Default)]
@@ -24,6 +25,7 @@ struct ProgramBuilder {
     insts: Vec<Instruction<usize>>,
     ctx: FunctionBuilderCtx,
     functions: HashMap<FunctionId, usize>,
+    function_names: HashMap<usize, Option<Spur>>,
     entrypoint: usize,
 }
 
@@ -35,6 +37,7 @@ impl Program {
             insts,
             ctx: FunctionBuilderCtx { mut constants },
             functions,
+            function_names,
             entrypoint,
         } = builder;
 
@@ -56,11 +59,16 @@ impl Program {
             insts,
             constants,
             entrypoint,
+            function_names,
         }
     }
 
     pub fn print(&self) {
         for (idx, inst) in self.insts.iter().enumerate() {
+            if let Some(key) = self.function_names.get(&idx) {
+                let name = key.map_or("<unnamed>", resolve_symbol);
+                println!("{name}:");
+            }
             print!("  #{idx:<3}");
             let inst = inst.map_reg(|r| Register(r.0 as _));
             print_inst(&inst, &self.constants);
@@ -114,10 +122,11 @@ impl ProgramBuilder {
             }
         }
 
-        if let Some(name) = def.name && resolve_symbol(name) == "main" {
+        if let Some(name) = def.header.name && resolve_symbol(name) == "main" {
             self.entrypoint = begin;
         }
 
-        self.functions.insert(def.id, begin);
+        self.functions.insert(def.header.id, begin);
+        self.function_names.insert(begin, def.header.name);
     }
 }

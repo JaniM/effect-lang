@@ -11,52 +11,38 @@ type Span = Range<usize>;
 enum RawToken {
     #[token("fn")]
     Fn,
-
     #[token("if")]
     If,
-
     #[token("else")]
     Else,
-
     #[token("let")]
     Let,
-
     #[token("=")]
     Assign,
-
     #[token("==")]
     Equals,
-
     #[token("+")]
     Plus,
-
     #[token(";")]
     Semicolon,
-
+    #[token(":")]
+    Colon,
     #[token("{")]
     OpenCurly,
-
     #[token("}")]
     CloseCurly,
-
     #[token("(")]
     OpenRound,
-
     #[token(")")]
     CloseRound,
-
     #[token(",")]
     Comma,
-
     #[regex("[a-zA-Z_][a-zA-Z0-9_]*")]
     Identifier,
-
     #[regex(r#""(\\.|[^"])*""#)]
     String,
-
     #[regex(r#"[0-9]+"#)]
     Number,
-
     #[error]
     #[regex(r"[ \t\n\f]+", logos::skip)]
     Error,
@@ -72,6 +58,7 @@ pub enum Token {
     Assign,
     Plus,
     Semicolon,
+    Colon,
     OpenCurly,
     CloseCurly,
     OpenRound,
@@ -116,6 +103,7 @@ impl Lexer<'_> {
             RawToken::Else => Token::Else,
             RawToken::Let => Token::Let,
             RawToken::Semicolon => Token::Semicolon,
+            RawToken::Colon => Token::Colon,
             RawToken::OpenCurly => Token::OpenCurly,
             RawToken::CloseCurly => Token::CloseCurly,
             RawToken::OpenRound => Token::OpenRound,

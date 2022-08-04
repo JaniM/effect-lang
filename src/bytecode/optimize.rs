@@ -255,6 +255,7 @@ fn replace_regiater(inst: &mut Instruction<usize>, orig: Register<usize>, new: R
         | StoreLocal(_, reg)
         | LoadLocal(_, reg)
         | Push(reg)
+        | Pop(reg)
         | Call(reg)
         | Equals(reg) => {
             *reg = new;

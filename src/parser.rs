@@ -24,8 +24,15 @@ pub struct Block {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct Argument {
+    pub name: Spur,
+    pub ty: Option<Spur>,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct FnDef {
     pub name: Option<Spur>,
+    pub args: Vec<Argument>,
     pub body: Spanned<Block>,
 }
 
@@ -129,11 +136,15 @@ fn fn_def(
     block_expression: impl MParser<Node>,
     expression: impl MParser<Node>,
 ) -> impl MParser<Node> {
+    let argument = ident()
+        .then(just(Token::Colon).ignore_then(ident()).or_not())
+        .map(|(name, ty)| Argument { name, ty });
+
     just(Token::Fn)
         .ignore_then(ident().or_not())
-        .then(list_of(ident()))
+        .then(list_of(argument))
         .then(block(block_expression, expression))
-        .map(|((name, _args), body)| RawNode::FnDef(FnDef { name, body }))
+        .map(|((name, args), body)| RawNode::FnDef(FnDef { name, args, body }))
         .map_with_span(Spanned)
 }
 
@@ -245,9 +256,17 @@ macro_rules! node {
             args: vec![$($arg),*],
         })
     };
+    (fn $name:ident ($args:expr) $body:expr) => {
+        RawNode::FnDef(FnDef {
+            name: Some(crate::intern::INTERNER.get_or_intern(stringify!($name))),
+            args: $args,
+            body: $body
+        })
+    };
     (fn $name:ident () $body:expr) => {
         RawNode::FnDef(FnDef {
             name: Some(crate::intern::INTERNER.get_or_intern(stringify!($name))),
+            args: vec![],
             body: $body
         })
     };

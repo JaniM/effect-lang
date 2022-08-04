@@ -40,8 +40,8 @@ pub enum Type {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FnArgument {
-    name: Spur,
-    ty: Type,
+    pub name: Spur,
+    pub ty: Type,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -89,9 +89,15 @@ pub struct Node {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct FnDef {
+pub struct FnHeader {
     pub id: FunctionId,
     pub name: Option<Spur>,
+    pub ty: Type,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FnDef {
+    pub header: FnHeader,
     pub arguments: Vec<FnArgument>,
     pub return_ty: Type,
     pub body: Node,
@@ -161,15 +167,32 @@ impl HlirBuilder {
     ) -> Result<(), HlirBuildError> {
         match node {
             ast::RawNode::FnDef(def) => {
-                let func = FnDef {
+                let arguments: Vec<_> = def
+                    .args
+                    .into_iter()
+                    .map(|x| FnArgument {
+                        name: x.name,
+                        ty: self.unknown_type(),
+                    })
+                    .collect();
+
+                let header = FnHeader {
                     id: FunctionId(inc!(self.func_id_counter)),
                     name: def.name,
-                    arguments: vec![],
+                    ty: Type::Function {
+                        inputs: arguments.iter().map(|x| x.ty.clone()).collect(),
+                        output: Type::Unit.into(),
+                    },
+                };
+
+                let func = FnDef {
+                    header,
+                    arguments,
                     return_ty: Type::Unit,
                     body: self.read_block(module, def.body)?,
                 };
 
-                module.functions.insert(func.id, func);
+                module.functions.insert(func.header.id, func);
             }
             _ => {
                 return Err(HlirBuildError::InvalidTopLevel(Span(
@@ -378,8 +401,14 @@ mod test {
         use NodeKind::*;
 
         let func = FnDef {
-            id: FunctionId(0),
-            name: Some(key("main")),
+            header: FnHeader {
+                id: FunctionId(0),
+                name: Some(key("main")),
+                ty: Type::Function {
+                    inputs: vec![],
+                    output: Type::Unit.into(),
+                },
+            },
             arguments: vec![],
             return_ty: Type::Unit,
             body: Node {
@@ -436,8 +465,14 @@ mod test {
         use Type::*;
 
         let func = FnDef {
-            id: FunctionId(0),
-            name: Some(key("main")),
+            header: FnHeader {
+                id: FunctionId(0),
+                name: Some(key("main")),
+                ty: Type::Function {
+                    inputs: vec![],
+                    output: Type::Unit.into(),
+                },
+            },
             arguments: vec![],
             return_ty: Unit,
             body: Node {
