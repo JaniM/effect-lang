@@ -177,6 +177,9 @@ impl HlirVisitorImmut for TypecheckContext {
                     BinopKind::Equals => {
                         self.constraints.push(Equal(node.ty, self.types.bool()));
                     }
+                    BinopKind::Less => {
+                        self.constraints.push(Equal(node.ty, self.types.bool()));
+                    }
                     BinopKind::Add => {
                         self.constraints.push(Equal(node.ty, left.ty));
                     }

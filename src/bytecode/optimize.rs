@@ -257,7 +257,8 @@ fn replace_regiater(inst: &mut Instruction<usize>, orig: Register<usize>, new: R
         | Push(reg)
         | Pop(reg)
         | Call(reg)
-        | Equals(reg) => {
+        | Equals(reg)
+        | Less(reg) => {
             *reg = new;
         }
         IntCmp(a, b) | Copy(a, b) => {
@@ -357,7 +358,7 @@ pub fn describe_inst<T: Default + Copy>(inst: &Instruction<T>) -> InstDesc<T> {
             reads.push(*b);
             writes.push(*out);
         }
-        Instruction::Equals(reg) => {
+        Instruction::Equals(reg) | Instruction::Less(reg) => {
             writes.push(*reg);
         }
         Instruction::Jump(_) => {}

@@ -56,12 +56,13 @@ fn main() {
     let source = unindent(
         r#"
         fn main() {
-            let a = 1;
-            wow(a, "second");
+            loop(0);
         }
-        fn wow(a: int, b: string) {
-            print_int(a);
-            print(b);
+        fn loop(count: int) {
+            print_int(count);
+            if (count < 5) {
+                loop(count + 1);
+            }
         }
         "#,
     );
@@ -79,25 +80,17 @@ fn main() {
     Simplifier.walk_hlir(&mut hlir);
     NameResolver::new(&builtins).walk_hlir(&mut hlir);
 
-    {
-        let mut pretty = PrettyPrint::new(&builtins);
-        pretty.walk_hlir(&mut hlir);
-        println!("HIR:");
-        print_fragments(&pretty.fragments);
-        println!();
-    }
-
     let mut typecheck = TypecheckContext::new(&hlir.types);
     typecheck.walk_hlir(&mut hlir);
     typecheck.apply_constraints();
 
-    {
-        let mut pretty = PrettyPrint::new(&builtins);
-        pretty.walk_hlir(&mut hlir);
-        println!("HIR:");
-        print_fragments(&pretty.fragments);
-        println!();
-    }
+    // {
+    //     let mut pretty = PrettyPrint::new(&builtins);
+    //     pretty.walk_hlir(&mut hlir);
+    //     println!("HIR:");
+    //     print_fragments(&pretty.fragments);
+    //     println!();
+    // }
 
     report_unknown_types(&mut hlir);
 
@@ -106,14 +99,14 @@ fn main() {
     for fndef in module.functions.values() {
         let mut func = Function::default();
         FunctionBuilder::new(&mut func, &mut ctx).build_fndef(fndef);
-        print_function(&func, &ctx);
+        // print_function(&func, &ctx);
         simplify_function(&mut func);
         // print_function(&func, &ctx);
     }
 
-    println!("\nBytecode: ");
     let program = Program::from_hlir(&hlir);
-    program.print();
+    // println!("\nBytecode: ");
+    // program.print();
 
     let mut interpreter = Interpreter::<StandardPorts>::new(program).with_stdout(std::io::stdout());
     load_standard_builtins(&mut interpreter);

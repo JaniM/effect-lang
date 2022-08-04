@@ -137,7 +137,7 @@ impl<P: Ports> Interpreter<P> {
                 if idx <= self.frame.locals.len() {
                     self.frame.locals.resize_with(idx + 1, Default::default);
                 }
-                self.frame.registers[idx] = self.frame.registers[reg as usize].clone();
+                self.frame.locals[idx] = self.frame.registers[reg as usize].clone();
             }
             Instruction::LoadBuiltin(idx, Register(reg)) => {
                 self.frame.registers[reg as usize] = Value::Builtin(idx);
@@ -166,6 +166,9 @@ impl<P: Ports> Interpreter<P> {
             }
             Instruction::Equals(Register(reg)) => {
                 self.frame.registers[reg as usize] = Value::Bool(self.compare == Ordering::Equal);
+            }
+            Instruction::Less(Register(reg)) => {
+                self.frame.registers[reg as usize] = Value::Bool(self.compare == Ordering::Less);
             }
             Instruction::Jump(addr) => {
                 self.ip = addr as usize;

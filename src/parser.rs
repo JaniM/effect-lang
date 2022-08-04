@@ -52,6 +52,7 @@ pub struct If {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BinopKind {
     Equals,
+    Less,
     Add,
 }
 
@@ -184,6 +185,7 @@ fn parser() -> impl MParser<Vec<Node>> {
 
         let binopkind = select! {
             Token::Equals => BinopKind::Equals,
+            Token::LeftArrow => BinopKind::Less,
             Token::Plus => BinopKind::Add,
         };
 
