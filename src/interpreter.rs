@@ -12,16 +12,13 @@ use derive_more::From;
 use crate::{
     bytecode::{program::Program, Instruction, Register, Value},
     hlir::{
-        self,
-        name_resolve::NameResolver,
-        simplify::Simplifier,
-        typecheck::{report_unknown_types, Typechecker},
-        visitor::HlirVisitor,
-        FileId, HlirBuilder,
+        self, name_resolve::NameResolver, simplify::Simplifier, visitor::HlirVisitor, FileId,
+        HlirBuilder,
     },
     interpreter::standard::{load_standard_builtins, StandardPorts},
     lexer::{LexError, Lexer, Token},
     parser::parse_tokens,
+    typecheck::{report_unknown_types, TypecheckContext},
 };
 
 use self::builtin::{BuiltinAdapter, BuiltinFunction, ErasedBuiltin, LoadBuiltin};
@@ -34,6 +31,7 @@ pub trait Ports {
 #[derive(Default)]
 struct Frame {
     registers: [Value; 32],
+    locals: Vec<Value>,
     return_addr: usize,
 }
 
@@ -88,11 +86,14 @@ impl<P: Ports> Interpreter<P> {
         builder.read_module(FileId(0), ast).unwrap();
         let mut hlir = builder.hlir;
 
-        let builtins = hlir::Builtins::load(|l| load_standard_builtins::<StandardPorts>(l));
+        let builtins =
+            hlir::Builtins::load(&hlir.types, |l| load_standard_builtins::<StandardPorts>(l));
 
         Simplifier.walk_hlir(&mut hlir);
         NameResolver::new(&builtins).walk_hlir(&mut hlir);
-        Typechecker::default().walk_hlir(&mut hlir);
+        let mut typecheck = TypecheckContext::new(&hlir.types);
+        typecheck.walk_hlir(&mut hlir);
+        typecheck.apply_constraints();
 
         report_unknown_types(&mut hlir);
 
@@ -129,13 +130,13 @@ impl<P: Ports> Interpreter<P> {
                 self.frame.registers[reg as usize] = self.program.constants[idx as usize].clone();
             }
             Instruction::LoadLocal(idx, Register(reg)) => {
-                // FIXME: This is a temporary hack.
-                let idx = idx as usize + 128;
-                self.frame.registers[reg as usize] = self.frame.registers[idx].clone();
+                self.frame.registers[reg as usize] = self.frame.locals[idx as usize].clone();
             }
             Instruction::StoreLocal(idx, Register(reg)) => {
-                // FIXME: This is a temporary hack.
-                let idx = idx as usize + 128;
+                let idx = idx as usize;
+                if idx <= self.frame.locals.len() {
+                    self.frame.locals.resize_with(idx + 1, Default::default);
+                }
                 self.frame.registers[idx] = self.frame.registers[reg as usize].clone();
             }
             Instruction::LoadBuiltin(idx, Register(reg)) => {

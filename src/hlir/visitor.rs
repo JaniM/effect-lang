@@ -8,6 +8,7 @@ pub enum VisitAction {
 #[allow(unused_variables)]
 pub trait HlirVisitor: Sized {
     fn walk_hlir(&mut self, node: &mut Hlir) {
+        self.visit_hlir(node);
         for module in node.modules.values_mut() {
             self.walk_module(module);
         }
@@ -81,6 +82,10 @@ pub trait HlirVisitor: Sized {
         }
     }
 
+    fn visit_hlir(&mut self, hlir: &mut Hlir) -> VisitAction {
+        VisitAction::Recurse
+    }
+
     fn visit_module(&mut self, module: &mut Module) -> VisitAction {
         VisitAction::Recurse
     }
@@ -97,6 +102,7 @@ pub trait HlirVisitor: Sized {
 #[allow(unused_variables)]
 pub trait HlirVisitorImmut: Sized {
     fn walk_hlir(&mut self, node: &Hlir) {
+        self.visit_hlir(node);
         for module in node.modules.values() {
             self.walk_module(module);
         }
@@ -168,6 +174,10 @@ pub trait HlirVisitorImmut: Sized {
             },
             VisitAction::Nothing => {}
         }
+    }
+
+    fn visit_hlir(&mut self, hlir: &Hlir) -> VisitAction {
+        VisitAction::Recurse
     }
 
     fn visit_module(&mut self, module: &Module) -> VisitAction {

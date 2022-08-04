@@ -4,9 +4,12 @@ use crate::{
     hlir::{visitor::VisitAction, Literal},
     intern::resolve_symbol,
     parser::BinopKind,
+    typecheck::TypeStore,
 };
 
-use super::{visitor::HlirVisitorImmut, Builtins, FnDef, FnHeader, FunctionId, NodeKind, Type};
+use super::{
+    visitor::HlirVisitorImmut, Builtins, FnDef, FnHeader, FunctionId, NodeKind, Type, TypeId,
+};
 
 #[derive(Debug)]
 pub enum Fragment<'a> {
@@ -20,6 +23,7 @@ pub struct PrettyPrint<'s, 'b> {
     pub builtins: &'b Builtins,
     pub fragments: Vec<Fragment<'s>>,
     global: HashMap<FunctionId, FnHeader>,
+    types: TypeStore,
 }
 
 impl<'s, 'b> PrettyPrint<'s, 'b> {
@@ -28,6 +32,7 @@ impl<'s, 'b> PrettyPrint<'s, 'b> {
             builtins,
             fragments: Default::default(),
             global: HashMap::new(),
+            types: Default::default(),
         }
     }
 
@@ -47,10 +52,11 @@ impl<'s, 'b> PrettyPrint<'s, 'b> {
         self.fragments.push(Fragment::Indent(-2));
     }
 
-    fn format_type(&mut self, ty: &Type) {
+    fn format_type(&mut self, id: &TypeId) {
+        let ty = self.types.get(*id);
         match ty {
-            Type::Unknown(id) => {
-                self.text(format!("?{}", id));
+            Type::Unknown => {
+                self.text(format!("?{}", id.0));
             }
             Type::Function { inputs, output } => {
                 self.text("(");
@@ -61,7 +67,7 @@ impl<'s, 'b> PrettyPrint<'s, 'b> {
                     }
                 }
                 self.text(") -> ");
-                self.format_type(output);
+                self.format_type(&output);
             }
             Type::String => {
                 self.text("string");
@@ -75,11 +81,20 @@ impl<'s, 'b> PrettyPrint<'s, 'b> {
             Type::Bool => {
                 self.text("bool");
             }
+            Type::Name(key) => {
+                self.text("?");
+                self.text(resolve_symbol(key));
+            }
         }
     }
 }
 
 impl HlirVisitorImmut for PrettyPrint<'_, '_> {
+    fn visit_hlir(&mut self, hlir: &super::Hlir) -> VisitAction {
+        self.types = hlir.types.clone();
+        VisitAction::Recurse
+    }
+
     fn visit_module(&mut self, module: &super::Module) -> VisitAction {
         self.global = module
             .functions
@@ -227,6 +242,8 @@ impl HlirVisitorImmut for PrettyPrint<'_, '_> {
                         self.text(format!(r#""{name}""#));
                     }
                     Literal::Int(v) => self.text(format!("{v}")),
+                    Literal::Bool(true) => self.text("true"),
+                    Literal::Bool(false) => self.text("false"),
                 }
                 VisitAction::Recurse
             }

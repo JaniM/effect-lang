@@ -7,6 +7,7 @@ mod intern;
 mod interpreter;
 mod lexer;
 mod parser;
+mod typecheck;
 
 use crate::{
     bytecode::{
@@ -14,17 +15,13 @@ use crate::{
         FunctionBuilderCtx,
     },
     hlir::{name_resolve::NameResolver, pretty::PrettyPrint, simplify::Simplifier, HlirBuilder},
-    hlir::{
-        pretty::print_fragments,
-        typecheck::{report_unknown_types, Typechecker},
-        visitor::HlirVisitor,
-        Builtins, FileId,
-    },
+    hlir::{pretty::print_fragments, visitor::HlirVisitor, Builtins, FileId},
     interpreter::{
         standard::{load_standard_builtins, StandardPorts},
         Interpreter,
     },
     parser::parse,
+    typecheck::{report_unknown_types, TypecheckContext},
 };
 use unindent::unindent;
 
@@ -59,10 +56,11 @@ fn main() {
     let source = unindent(
         r#"
         fn main() {
-            wow("first", "second");
+            let a = 1;
+            wow(a, "second");
         }
-        fn wow(a, b) {
-            print(a);
+        fn wow(a: int, b: string) {
+            print_int(a);
             print(b);
         }
         "#,
@@ -76,11 +74,22 @@ fn main() {
     builder.read_module(FileId(0), ast).unwrap();
     let mut hlir = builder.hlir;
 
-    let builtins = Builtins::load(|l| load_standard_builtins::<StandardPorts>(l));
+    let builtins = Builtins::load(&hlir.types, |l| load_standard_builtins::<StandardPorts>(l));
 
     Simplifier.walk_hlir(&mut hlir);
     NameResolver::new(&builtins).walk_hlir(&mut hlir);
-    Typechecker::default().walk_hlir(&mut hlir);
+
+    {
+        let mut pretty = PrettyPrint::new(&builtins);
+        pretty.walk_hlir(&mut hlir);
+        println!("HIR:");
+        print_fragments(&pretty.fragments);
+        println!();
+    }
+
+    let mut typecheck = TypecheckContext::new(&hlir.types);
+    typecheck.walk_hlir(&mut hlir);
+    typecheck.apply_constraints();
 
     {
         let mut pretty = PrettyPrint::new(&builtins);
@@ -93,7 +102,7 @@ fn main() {
     report_unknown_types(&mut hlir);
 
     let module = hlir.modules.get(&hlir::ModuleId(0)).unwrap();
-    let mut ctx = FunctionBuilderCtx::default();
+    let mut ctx = FunctionBuilderCtx::new(&hlir.types);
     for fndef in module.functions.values() {
         let mut func = Function::default();
         FunctionBuilder::new(&mut func, &mut ctx).build_fndef(fndef);

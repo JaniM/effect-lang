@@ -5,6 +5,7 @@ use lasso::Spur;
 use crate::{
     hlir::{FnDef, FunctionId, Hlir, Module},
     intern::resolve_symbol,
+    typecheck::TypeStore,
 };
 
 use super::{
@@ -20,7 +21,6 @@ pub struct Program {
     function_names: HashMap<usize, Option<Spur>>,
 }
 
-#[derive(Default)]
 struct ProgramBuilder {
     insts: Vec<Instruction<usize>>,
     ctx: FunctionBuilderCtx,
@@ -31,11 +31,11 @@ struct ProgramBuilder {
 
 impl Program {
     pub fn from_hlir(hlir: &Hlir) -> Self {
-        let mut builder = ProgramBuilder::default();
+        let mut builder = ProgramBuilder::new(&hlir.types);
         builder.load_hlir(hlir);
         let ProgramBuilder {
             insts,
-            ctx: FunctionBuilderCtx { mut constants },
+            ctx: FunctionBuilderCtx { mut constants, .. },
             functions,
             function_names,
             entrypoint,
@@ -77,6 +77,16 @@ impl Program {
 }
 
 impl ProgramBuilder {
+    fn new(types: &TypeStore) -> Self {
+        Self {
+            insts: Default::default(),
+            ctx: FunctionBuilderCtx::new(types),
+            functions: Default::default(),
+            function_names: Default::default(),
+            entrypoint: Default::default(),
+        }
+    }
+
     fn load_hlir(&mut self, hlir: &Hlir) {
         for module in hlir.modules.values() {
             self.load_module(module);

@@ -40,7 +40,7 @@ fn unit_fn_call() {
             func("a", "b");
             func("c", "d");
         }
-        fn func(a, b) {
+        fn func(a: string, b: string) {
             print(a);
             print(b);
         }"#,

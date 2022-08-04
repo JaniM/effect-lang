@@ -1,7 +1,6 @@
 pub mod name_resolve;
 pub mod pretty;
 pub mod simplify;
-pub mod typecheck;
 pub mod visitor;
 
 use std::collections::HashMap;
@@ -9,9 +8,10 @@ use std::collections::HashMap;
 use lasso::Spur;
 
 use crate::inc;
-use crate::intern::INTERNER;
+use crate::intern::{resolve_symbol, INTERNER};
 use crate::parser as ast;
 use crate::parser::BinopKind;
+use crate::typecheck::TypeStore;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FileId(pub usize);
@@ -25,23 +25,18 @@ pub struct ModuleId(pub usize);
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FunctionId(pub usize);
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TypeId(pub usize);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Type {
-    Unknown(usize),
-    Function {
-        inputs: Vec<Type>,
-        output: Box<Type>,
-    },
+    Unknown,
+    Function { inputs: Vec<TypeId>, output: TypeId },
     String,
     Int,
     Bool,
     Unit,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct FnArgument {
-    pub name: Spur,
-    pub ty: Type,
+    Name(Spur),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -51,6 +46,7 @@ pub struct Block(Vec<Node>);
 pub enum Literal {
     String(Spur),
     Int(i64),
+    Bool(bool),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -84,7 +80,7 @@ pub enum NodeKind {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Node {
     pub kind: NodeKind,
-    pub ty: Type,
+    pub ty: TypeId,
     pub source_span: Span,
 }
 
@@ -92,14 +88,20 @@ pub struct Node {
 pub struct FnHeader {
     pub id: FunctionId,
     pub name: Option<Spur>,
-    pub ty: Type,
+    pub ty: TypeId,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FnArgument {
+    pub name: Spur,
+    pub ty: TypeId,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FnDef {
     pub header: FnHeader,
     pub arguments: Vec<FnArgument>,
-    pub return_ty: Type,
+    pub return_ty: TypeId,
     pub body: Node,
 }
 
@@ -114,6 +116,7 @@ pub struct Module {
 #[derive(Default, Debug)]
 pub struct Hlir {
     pub modules: HashMap<ModuleId, Module>,
+    pub types: TypeStore,
 }
 
 #[derive(Default)]
@@ -121,7 +124,6 @@ pub struct HlirBuilder {
     pub hlir: Hlir,
     module_id_counter: usize,
     func_id_counter: usize,
-    type_counter: usize,
 }
 
 #[derive(Debug)]
@@ -172,23 +174,28 @@ impl HlirBuilder {
                     .into_iter()
                     .map(|x| FnArgument {
                         name: x.name,
-                        ty: self.unknown_type(),
+                        ty: match x.ty {
+                            Some(key) => self.hlir.types.insert(Type::Name(key)),
+                            None => self.unknown_type(),
+                        },
                     })
                     .collect();
+
+                let ty = self.hlir.types.insert(Type::Function {
+                    inputs: arguments.iter().map(|x| x.ty).collect(),
+                    output: self.hlir.types.unit(),
+                });
 
                 let header = FnHeader {
                     id: FunctionId(inc!(self.func_id_counter)),
                     name: def.name,
-                    ty: Type::Function {
-                        inputs: arguments.iter().map(|x| x.ty.clone()).collect(),
-                        output: Type::Unit.into(),
-                    },
+                    ty,
                 };
 
                 let func = FnDef {
                     header,
                     arguments,
-                    return_ty: Type::Unit,
+                    return_ty: self.hlir.types.unit(),
                     body: self.read_block(module, def.body)?,
                 };
 
@@ -220,7 +227,7 @@ impl HlirBuilder {
 
         let node = Node {
             kind: NodeKind::Block(nodes),
-            ty: Type::Unit,
+            ty: self.hlir.types.unit(),
             source_span: Span(module.file, span.start, span.end),
         };
 
@@ -301,21 +308,28 @@ impl HlirBuilder {
             },
         };
 
+        let ty = match &kind {
+            NodeKind::Let { .. } | NodeKind::If { .. } | NodeKind::Block(_) => {
+                self.hlir.types.unit()
+            }
+            _ => self.unknown_type(),
+        };
+
         Ok(Node {
             kind,
-            ty: self.unknown_type(),
+            ty,
             source_span: Span(module.file, span.start, span.end),
         })
     }
 
-    fn unknown_type(&mut self) -> Type {
-        Type::Unknown(inc!(self.type_counter))
+    fn unknown_type(&mut self) -> TypeId {
+        self.hlir.types.unknown_type()
     }
 
     fn unit_node(&self) -> Node {
         Node {
             kind: NodeKind::Block(vec![]),
-            ty: Type::Unit,
+            ty: self.hlir.types.insert(Type::Unit),
             source_span: Span(FileId(usize::MAX), 0, 0),
         }
     }
@@ -324,7 +338,7 @@ impl HlirBuilder {
 #[derive(Debug, Clone)]
 pub struct BuiltinIR {
     pub name: Spur,
-    pub ty: Type,
+    pub ty: TypeId,
     pub idx: usize,
 }
 
@@ -335,10 +349,11 @@ pub struct Builtins {
 }
 
 impl Builtins {
-    pub fn load(f: impl FnOnce(&mut BuiltinLoader)) -> Self {
+    pub fn load(types: &TypeStore, f: impl FnOnce(&mut BuiltinLoader)) -> Self {
         let mut builtins = Builtins::default();
         let mut loader = BuiltinLoader {
             idx: 0,
+            types: types.clone(),
             builtins: &mut builtins,
         };
         f(&mut loader);
@@ -348,6 +363,7 @@ impl Builtins {
 
 pub struct BuiltinLoader<'a> {
     idx: usize,
+    types: TypeStore,
     pub builtins: &'a mut Builtins,
 }
 
@@ -363,7 +379,7 @@ impl<P: crate::interpreter::Ports> crate::interpreter::builtin::LoadBuiltin<P>
         let key = INTERNER.get_or_intern(name);
         let ir = BuiltinIR {
             name: key,
-            ty: f.extract_type(),
+            ty: f.extract_type(&self.types),
             idx: inc!(self.idx),
         };
         self.builtins.builtins.insert(key, ir.clone());
@@ -389,46 +405,51 @@ mod test {
         let mut builder = HlirBuilder::default();
         builder.read_module(FileId(0), ast).unwrap();
 
-        let builtins = Builtins::load(|l| load_standard_builtins::<StandardPorts>(l));
+        let builtins = Builtins::load(&builder.hlir.types, |l| {
+            load_standard_builtins::<StandardPorts>(l)
+        });
 
         Simplifier.walk_hlir(&mut builder.hlir);
         NameResolver::new(&builtins).walk_hlir(&mut builder.hlir);
 
         let key = |v| INTERNER.get(v).unwrap();
 
+        let types = builder.hlir.types;
         let module = builder.hlir.modules.get(&ModuleId(0)).unwrap();
 
         use NodeKind::*;
+
+        let unit = types.unit();
 
         let func = FnDef {
             header: FnHeader {
                 id: FunctionId(0),
                 name: Some(key("main")),
-                ty: Type::Function {
+                ty: types.insert(Type::Function {
                     inputs: vec![],
-                    output: Type::Unit.into(),
-                },
+                    output: unit,
+                }),
             },
             arguments: vec![],
-            return_ty: Type::Unit,
+            return_ty: unit,
             body: Node {
                 kind: Call {
                     callee: Node {
                         kind: Builtin(0),
-                        ty: Type::Function {
-                            inputs: vec![Type::String],
-                            output: Type::Unit.into(),
-                        },
+                        ty: types.insert(Type::Function {
+                            inputs: vec![types.string()],
+                            output: unit,
+                        }),
                         source_span: Span(FileId(0), 12, 17),
                     }
                     .into(),
                     args: vec![Node {
                         kind: Literal(self::Literal::String(key("hello"))),
-                        ty: Type::Unknown(1),
+                        ty: TypeId(3),
                         source_span: Span(FileId(0), 18, 25),
                     }],
                 },
-                ty: Type::Unknown(2),
+                ty: TypeId(4),
                 source_span: Span(FileId(0), 12, 26),
             },
         };
@@ -452,46 +473,50 @@ mod test {
         let mut builder = HlirBuilder::default();
         builder.read_module(FileId(0), ast).unwrap();
 
-        let builtins = Builtins::load(|l| load_standard_builtins::<StandardPorts>(l));
+        let builtins = Builtins::load(&builder.hlir.types, |l| {
+            load_standard_builtins::<StandardPorts>(l)
+        });
 
         Simplifier.walk_hlir(&mut builder.hlir);
         NameResolver::new(&builtins).walk_hlir(&mut builder.hlir);
 
         let key = |v: &str| INTERNER.get(v).unwrap();
 
+        let types = &builder.hlir.types;
         let module = builder.hlir.modules.get(&ModuleId(0)).unwrap();
 
         use NodeKind::*;
-        use Type::*;
+
+        let unit = types.unit();
 
         let func = FnDef {
             header: FnHeader {
                 id: FunctionId(0),
                 name: Some(key("main")),
-                ty: Type::Function {
+                ty: types.insert(Type::Function {
                     inputs: vec![],
-                    output: Type::Unit.into(),
-                },
+                    output: unit,
+                }),
             },
             arguments: vec![],
-            return_ty: Unit,
+            return_ty: unit,
             body: Node {
                 kind: Let {
                     name: key("a"),
                     value: Node {
                         kind: Literal(self::Literal::Int(1)),
-                        ty: Unknown(0),
+                        ty: TypeId(2),
                         source_span: Span(FileId(0), 20, 21),
                     }
                     .into(),
                     expr: Node {
                         kind: Name(key("a")),
-                        ty: Unknown(2),
+                        ty: TypeId(3),
                         source_span: Span(FileId(0), 23, 24),
                     }
                     .into(),
                 },
-                ty: Unknown(1),
+                ty: unit,
                 source_span: Span(FileId(0), 12, 22),
             },
         };

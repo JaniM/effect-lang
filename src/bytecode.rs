@@ -14,6 +14,7 @@ use crate::{
     },
     intern::resolve_symbol,
     parser::BinopKind,
+    typecheck::TypeStore,
 };
 
 #[derive(Clone, Debug, DebugPls, PartialEq)]
@@ -97,9 +98,19 @@ pub struct FunctionBuilder<'a, T> {
     locals: Vec<Spur>,
 }
 
-#[derive(Debug, DebugPls, Default, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct FunctionBuilderCtx {
     constants: Vec<Value>,
+    types: TypeStore,
+}
+
+impl FunctionBuilderCtx {
+    pub fn new(types: &TypeStore) -> Self {
+        Self {
+            constants: Default::default(),
+            types: types.clone(),
+        }
+    }
 }
 
 impl<T> Instruction<T> {
@@ -314,11 +325,8 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
 
                 self.inst(Instruction::Call(func));
 
-                match callee.ty {
-                    Type::Function {
-                        output: box Type::Unit,
-                        ..
-                    } => {}
+                match self.ctx.types.get(callee.ty) {
+                    Type::Function { output, .. } if output == self.ctx.types.unit() => {}
                     Type::Function { .. } => {
                         let out = self.out_reg();
                         self.inst(Instruction::Pop(out));
@@ -366,6 +374,7 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
                         Value::String(resolve_symbol(*key).to_owned().into())
                     }
                     hlir::Literal::Int(v) => Value::Int(*v),
+                    hlir::Literal::Bool(v) => Value::Bool(*v),
                 };
 
                 let constant = self.create_constant(val);
@@ -490,7 +499,9 @@ mod test {
         let mut builder = HlirBuilder::default();
         builder.read_module(FileId(0), ast).unwrap();
 
-        let builtins = Builtins::load(|l| load_standard_builtins::<StandardPorts>(l));
+        let builtins = Builtins::load(&builder.hlir.types, |l| {
+            load_standard_builtins::<StandardPorts>(l)
+        });
 
         Simplifier.walk_hlir(&mut builder.hlir);
         NameResolver::new(&builtins).walk_hlir(&mut builder.hlir);
@@ -498,7 +509,7 @@ mod test {
         let module = builder.hlir.modules.get(&ModuleId(0)).unwrap();
         let fndef = module.functions.get(&hlir::FunctionId(0)).unwrap();
 
-        let mut ctx = FunctionBuilderCtx::default();
+        let mut ctx = FunctionBuilderCtx::new(&builder.hlir.types);
 
         let mut func = Function::default();
         FunctionBuilder::new(&mut func, &mut ctx).build_fndef(fndef);
@@ -551,7 +562,8 @@ mod test {
         assert_eq!(
             ctx,
             FunctionBuilderCtx {
-                constants: vec![Value::Int(0), Value::String("hello".to_owned().into())]
+                constants: vec![Value::Int(0), Value::String("hello".to_owned().into())],
+                types: builder.hlir.types.clone(),
             }
         );
     }

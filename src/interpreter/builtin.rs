@@ -1,12 +1,16 @@
 use std::{marker::PhantomData, rc::Rc};
 
-use crate::{bytecode::Value, hlir::Type};
+use crate::{
+    bytecode::Value,
+    hlir::{Type, TypeId},
+    typecheck::TypeStore,
+};
 
 use super::{Interpreter, Ports};
 
 trait Extract: Sized {
     fn extract<P: Ports>(interpreter: &mut Interpreter<P>) -> Option<Self>;
-    fn extract_type() -> Type;
+    fn extract_type(types: &TypeStore) -> TypeId;
 }
 
 impl Extract for Rc<String> {
@@ -20,8 +24,8 @@ impl Extract for Rc<String> {
         }
     }
 
-    fn extract_type() -> Type {
-        Type::String
+    fn extract_type(types: &TypeStore) -> TypeId {
+        types.string()
     }
 }
 
@@ -36,15 +40,15 @@ impl Extract for i64 {
         }
     }
 
-    fn extract_type() -> Type {
-        Type::Int
+    fn extract_type(types: &TypeStore) -> TypeId {
+        types.int()
     }
 }
 
 pub trait BuiltinFunction<P: Ports, I> {
     fn call(&self, interpreter: &mut Interpreter<P>) -> Option<()>;
     fn arg_count(&self) -> usize;
-    fn extract_type(&self) -> Type;
+    fn extract_type(&self, types: &TypeStore) -> TypeId;
 }
 
 impl<F, P> BuiltinFunction<P, ()> for F
@@ -60,11 +64,11 @@ where
         0
     }
 
-    fn extract_type(&self) -> Type {
-        Type::Function {
+    fn extract_type(&self, types: &TypeStore) -> TypeId {
+        types.insert(Type::Function {
             inputs: vec![],
-            output: Box::new(Type::Unit),
-        }
+            output: types.unit(),
+        })
     }
 }
 
@@ -83,11 +87,11 @@ where
         1
     }
 
-    fn extract_type(&self) -> Type {
-        Type::Function {
-            inputs: vec![A::extract_type()],
-            output: Box::new(Type::Unit),
-        }
+    fn extract_type(&self, types: &TypeStore) -> TypeId {
+        types.insert(Type::Function {
+            inputs: vec![A::extract_type(types)],
+            output: types.unit(),
+        })
     }
 }
 
@@ -112,7 +116,7 @@ where
 pub trait ErasedBuiltin<P: Ports> {
     fn call(&self, interpreter: &mut Interpreter<P>) -> Option<()>;
     fn arg_count(&self) -> usize;
-    fn extract_type(&self) -> Type;
+    fn extract_type(&self, types: &TypeStore) -> TypeId;
 }
 
 impl<F, P, I> ErasedBuiltin<P> for BuiltinAdapter<F, P, I>
@@ -128,8 +132,8 @@ where
         BuiltinFunction::arg_count(&self.builtin)
     }
 
-    fn extract_type(&self) -> Type {
-        BuiltinFunction::extract_type(&self.builtin)
+    fn extract_type(&self, types: &TypeStore) -> TypeId {
+        BuiltinFunction::extract_type(&self.builtin, types)
     }
 }
 
