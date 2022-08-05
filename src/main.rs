@@ -11,7 +11,7 @@ mod typecheck;
 
 use crate::{
     bytecode::{
-        optimize::simplify_function, print_function, program::Program, Function, FunctionBuilder,
+        optimize::simplify_function, program::Program, Function, FunctionBuilder,
         FunctionBuilderCtx,
     },
     hlir::{name_resolve::NameResolver, pretty::PrettyPrint, simplify::Simplifier, HlirBuilder},
@@ -84,13 +84,13 @@ fn main() {
     typecheck.walk_hlir(&mut hlir);
     typecheck.apply_constraints();
 
-    // {
-    //     let mut pretty = PrettyPrint::new(&builtins);
-    //     pretty.walk_hlir(&mut hlir);
-    //     println!("HIR:");
-    //     print_fragments(&pretty.fragments);
-    //     println!();
-    // }
+    {
+        let mut pretty = PrettyPrint::new(&builtins);
+        pretty.walk_hlir(&mut hlir);
+        println!("HIR:");
+        print_fragments(&pretty.fragments);
+        println!();
+    }
 
     report_unknown_types(&mut hlir);
 
@@ -105,8 +105,8 @@ fn main() {
     }
 
     let program = Program::from_hlir(&hlir);
-    // println!("\nBytecode: ");
-    // program.print();
+    println!("\nBytecode: ");
+    program.print();
 
     let mut interpreter = Interpreter::<StandardPorts>::new(program).with_stdout(std::io::stdout());
     load_standard_builtins(&mut interpreter);

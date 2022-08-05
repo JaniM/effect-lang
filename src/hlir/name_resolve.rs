@@ -9,7 +9,7 @@ use crate::{
 
 use super::{
     visitor::{HlirVisitor, VisitAction},
-    Builtins, FnArgument, FnHeader, Literal, NodeKind, Type, TypeId,
+    Builtins, FnHeader, Literal, NodeKind, Type, TypeId,
 };
 
 pub struct NameResolver<'a> {

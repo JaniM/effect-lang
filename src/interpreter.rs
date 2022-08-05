@@ -8,6 +8,7 @@ use std::{cmp::Ordering, io::Write, rc::Rc};
 use chumsky::prelude::Simple;
 
 use derive_more::From;
+use tinyvec::TinyVec;
 
 use crate::{
     bytecode::{program::Program, Instruction, Register, Value},
@@ -31,7 +32,7 @@ pub trait Ports {
 #[derive(Default)]
 struct Frame {
     registers: [Value; 32],
-    locals: Vec<Value>,
+    locals: TinyVec<[Value; 8]>,
     return_addr: usize,
 }
 

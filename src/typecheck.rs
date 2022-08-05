@@ -193,11 +193,7 @@ impl HlirVisitorImmut for TypecheckContext {
                 self.constraints.push(ResultOf(callee.ty, node.ty));
                 VisitAction::Recurse
             }
-            NodeKind::If {
-                cond,
-                if_true,
-                if_false,
-            } => {
+            NodeKind::If { cond, .. } => {
                 self.constraints.push(Equal(cond.ty, self.types.bool()));
                 VisitAction::Recurse
             }

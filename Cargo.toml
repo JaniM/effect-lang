@@ -13,7 +13,7 @@ derive_more = "*"
 colored = "*"
 unindent = "*"
 once_cell = "*"
-tinyvec = "*"
+tinyvec = { version = "*", features = ["alloc"] }
 dbg-pls = { version = "*", features = ["derive", "pretty"] }
 
 [dev-dependencies]

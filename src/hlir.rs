@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use lasso::Spur;
 
 use crate::inc;
-use crate::intern::{resolve_symbol, INTERNER};
+use crate::intern::INTERNER;
 use crate::parser as ast;
 use crate::parser::BinopKind;
 use crate::typecheck::TypeStore;
