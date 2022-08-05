@@ -78,6 +78,7 @@ pub enum NodeKind {
         cond: Box<Node>,
         body: Box<Node>,
     },
+    Return(Box<Node>),
     Block(Vec<Node>),
     Literal(Literal),
     Name(Spur),
@@ -189,9 +190,14 @@ impl HlirBuilder {
                     })
                     .collect();
 
+                let output = match def.return_ty {
+                    Some(key) => self.hlir.types.insert(Type::Name(key)),
+                    None => self.hlir.types.unit(),
+                };
+
                 let ty = self.hlir.types.insert(Type::Function {
                     inputs: arguments.iter().map(|x| x.ty).collect(),
-                    output: self.hlir.types.unit(),
+                    output,
                 });
 
                 let header = FnHeader {
@@ -203,7 +209,7 @@ impl HlirBuilder {
                 let func = FnDef {
                     header,
                     arguments,
-                    return_ty: self.hlir.types.unit(),
+                    return_ty: output,
                     body: self.read_block(module, def.body)?,
                 };
 
@@ -322,6 +328,7 @@ impl HlirBuilder {
                 name: letd.name.0,
                 value: self.read_node(module, *letd.value)?.into(),
             },
+            ast::RawNode::Return(value) => NodeKind::Return(self.read_node(module, *value)?.into()),
         };
 
         let ty = match &kind {
@@ -329,7 +336,8 @@ impl HlirBuilder {
             | NodeKind::Assign { .. }
             | NodeKind::If { .. }
             | NodeKind::While { .. }
-            | NodeKind::Block(_) => self.hlir.types.unit(),
+            | NodeKind::Block(_)
+            | NodeKind::Return(_) => self.hlir.types.unit(),
             _ => self.unknown_type(),
         };
 

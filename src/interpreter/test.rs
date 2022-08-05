@@ -72,3 +72,26 @@ fn while_loop() {
 
     assert_eq!(interpreter.stdout.unwrap().get_ref(), b"1\n2\n3\n4\n5\n");
 }
+
+#[test]
+fn recurse() {
+    let source = unindent(
+        r#"
+        fn main() {
+            let x = foo(0);
+            print_int(x);
+        }
+        fn foo(c: int) -> int {
+            if (c < 5) {
+                return foo(c+1);
+            }
+            return c;
+        }"#,
+    );
+
+    let mut interpreter = test_interpreter(&source);
+    interpreter.program.print();
+    interpreter.run().unwrap();
+
+    assert_eq!(interpreter.stdout.unwrap().get_ref(), b"5\n");
+}

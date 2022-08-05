@@ -304,6 +304,15 @@ impl HlirVisitorImmut for PrettyPrint<'_, '_> {
                 self.format_type(&node.ty);
                 VisitAction::Recurse
             }
+            NodeKind::Return(value) => {
+                self.text("return");
+                self.text(" ");
+                self.indent();
+                self.walk_node(value);
+                self.dedent();
+
+                VisitAction::Nothing
+            }
         }
     }
 }

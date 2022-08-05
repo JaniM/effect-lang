@@ -1,3 +1,9 @@
+/// Generates bytecode directly from HLIR. This is.. tricky. We really want some kind of CFG before
+/// this.
+///
+/// Currently it is assumed virtual registers do not escape blocks, but this is plain not true for
+/// conditions. Thus we need a way to solve which registers are inputs to blocks and respect that
+/// in optimizations.
 pub mod optimize;
 pub mod program;
 
@@ -174,7 +180,10 @@ impl<'a> FunctionBuilder<'a, usize> {
         let block = self.new_block();
         self.switch_block(block);
         self.walk_function(def);
-        self.inst(Instruction::Return);
+
+        if self.func.blocks.last().unwrap().insts.last() != Some(&Instruction::Return) {
+            self.inst(Instruction::Return);
+        }
 
         let mut block_inputs = vec![];
         for block in self.func.blocks.iter_mut() {
@@ -449,6 +458,18 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
                 let constant = self.create_constant(val);
                 let reg = self.out_reg();
                 self.inst(Instruction::LoadConstant(constant, reg));
+
+                VisitAction::Nothing
+            }
+            NodeKind::Return(value) => {
+                let reg = self.next_reg();
+                self.walk_with_out(reg, value);
+
+                self.inst(Instruction::Push(reg));
+                self.inst(Instruction::Return);
+
+                let block = self.new_block();
+                self.switch_block(block);
 
                 VisitAction::Nothing
             }

@@ -11,6 +11,8 @@ type Span = Range<usize>;
 enum RawToken {
     #[token("fn")]
     Fn,
+    #[token("return")]
+    Return,
     #[token("if")]
     If,
     #[token("else")]
@@ -24,7 +26,9 @@ enum RawToken {
     #[token("==")]
     Equals,
     #[token("<")]
-    LeftArrow,
+    LessThan,
+    #[token("->")]
+    RightArrow,
     #[token("+")]
     Plus,
     #[token(";")]
@@ -55,12 +59,14 @@ enum RawToken {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Token {
     Fn,
+    Return,
     If,
     Else,
     While,
     Let,
     Equals,
-    LeftArrow,
+    LessThan,
+    RightArrow,
     Assign,
     Plus,
     Semicolon,
@@ -105,6 +111,7 @@ impl Lexer<'_> {
 
         let token = match token {
             RawToken::Fn => Token::Fn,
+            RawToken::Return => Token::Return,
             RawToken::If => Token::If,
             RawToken::Else => Token::Else,
             RawToken::While => Token::While,
@@ -123,7 +130,8 @@ impl Lexer<'_> {
             RawToken::Error => return Err(LexError::Unknown(self.lex.span())),
             RawToken::Assign => Token::Assign,
             RawToken::Equals => Token::Equals,
-            RawToken::LeftArrow => Token::LeftArrow,
+            RawToken::LessThan => Token::LessThan,
+            RawToken::RightArrow => Token::RightArrow,
             RawToken::Plus => Token::Plus,
         };
 

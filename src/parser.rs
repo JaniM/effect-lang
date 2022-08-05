@@ -33,6 +33,7 @@ pub struct Argument {
 pub struct FnDef {
     pub name: Option<Spur>,
     pub args: Vec<Argument>,
+    pub return_ty: Option<Spur>,
     pub body: Spanned<Block>,
 }
 
@@ -87,6 +88,7 @@ pub enum RawNode {
     Binop(Binop),
     Let(Let),
     Assign(Let),
+    Return(Box<Node>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -145,15 +147,25 @@ fn fn_def(
     block_expression: impl MParser<Node>,
     expression: impl MParser<Node>,
 ) -> impl MParser<Node> {
+    let ty = ident();
+
     let argument = ident()
-        .then(just(Token::Colon).ignore_then(ident()).or_not())
+        .then(just(Token::Colon).ignore_then(ty.clone()).or_not())
         .map(|(name, ty)| Argument { name, ty });
 
     just(Token::Fn)
         .ignore_then(ident().or_not())
         .then(list_of(argument))
+        .then(just(Token::RightArrow).ignore_then(ty).or_not())
         .then(block(block_expression, expression))
-        .map(|((name, args), body)| RawNode::FnDef(FnDef { name, args, body }))
+        .map(|(((name, args), return_ty), body)| {
+            RawNode::FnDef(FnDef {
+                name,
+                args,
+                return_ty,
+                body,
+            })
+        })
         .map_with_span(Spanned)
 }
 
@@ -206,7 +218,7 @@ fn parser() -> impl MParser<Vec<Node>> {
 
         let binopkind = select! {
             Token::Equals => BinopKind::Equals,
-            Token::LeftArrow => BinopKind::Less,
+            Token::LessThan => BinopKind::Less,
             Token::Plus => BinopKind::Add,
         };
 
@@ -224,12 +236,19 @@ fn parser() -> impl MParser<Vec<Node>> {
             .map(|(name, value)| RawNode::Assign(Let { name, value }))
             .map_with_span(Spanned);
 
+        let return_expr = just(Token::Return)
+            .ignore_then(expression.clone())
+            .map(Box::new)
+            .map(RawNode::Return)
+            .map_with_span(Spanned);
+
         choice((
             assign,
             binop,
             call,
             fn_def(block_expression.clone(), expression.clone()),
             if_clause(block_expression.clone(), expression.clone()),
+            return_expr,
             atom(expression),
         ))
     });
@@ -294,6 +313,7 @@ macro_rules! node {
         RawNode::FnDef(FnDef {
             name: Some(crate::intern::INTERNER.get_or_intern(stringify!($name))),
             args: $args,
+            return_ty: None,
             body: $body
         })
     };
@@ -301,6 +321,7 @@ macro_rules! node {
         RawNode::FnDef(FnDef {
             name: Some(crate::intern::INTERNER.get_or_intern(stringify!($name))),
             args: vec![],
+            return_ty: None,
             body: $body
         })
     };

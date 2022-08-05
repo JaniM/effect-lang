@@ -238,6 +238,10 @@ impl HlirVisitorImmut for TypecheckContext {
             }
             NodeKind::Builtin(_) => VisitAction::Recurse,
             NodeKind::Function(_) => VisitAction::Recurse,
+            NodeKind::Return(_value) => {
+                // TODO
+                VisitAction::Recurse
+            }
         }
     }
 }

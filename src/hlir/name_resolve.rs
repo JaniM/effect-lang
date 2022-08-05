@@ -40,10 +40,11 @@ impl<'a> NameResolver<'a> {
                     .iter()
                     .map(|x| self.resolve_type_names(*x))
                     .collect::<Vec<_>>();
-                if &new_inputs != &inputs {
+                let new_output = self.resolve_type_names(output);
+                if &new_inputs != &inputs || new_output != output {
                     self.types.insert(Type::Function {
                         inputs: new_inputs,
-                        output,
+                        output: new_output,
                     })
                 } else {
                     id

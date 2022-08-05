@@ -56,11 +56,14 @@ fn main() {
     let source = unindent(
         r#"
         fn main() {
-            let x = 0;
-            while (x < 5) {
-                x = x + 1;
-                print_int(x);
+            let x = foo(0);
+            print_int(x);
+        }
+        fn foo(c: int) -> int {
+            if (c < 5) {
+                return foo(c+1);
             }
+            return c;
         }
         "#,
     );
@@ -97,9 +100,8 @@ fn main() {
     for fndef in module.functions.values() {
         let mut func = Function::default();
         FunctionBuilder::new(&mut func, &mut ctx).build_fndef(fndef);
-        // print_function(&func, &ctx);
+        bytecode::print_function(&func, &ctx);
         simplify_function(&mut func);
-        // print_function(&func, &ctx);
     }
 
     let program = Program::from_hlir(&hlir);
