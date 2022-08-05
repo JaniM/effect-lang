@@ -56,12 +56,10 @@ fn main() {
     let source = unindent(
         r#"
         fn main() {
-            loop(0);
-        }
-        fn loop(count: int) {
-            print_int(count);
-            if (count < 5) {
-                loop(count + 1);
+            let x = 0;
+            while (x < 5) {
+                x = x + 1;
+                print_int(x);
             }
         }
         "#,

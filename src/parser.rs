@@ -49,6 +49,12 @@ pub struct If {
     pub if_false: Option<Spanned<Block>>,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct While {
+    pub cond: Box<Node>,
+    pub body: Spanned<Block>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BinopKind {
     Equals,
@@ -77,8 +83,10 @@ pub enum RawNode {
     String(Spur),
     Number(i64),
     If(If),
+    While(While),
     Binop(Binop),
     Let(Let),
+    Assign(Let),
 }
 
 #[derive(Debug, PartialEq)]
@@ -169,6 +177,19 @@ fn if_clause(
         .map_with_span(Spanned)
 }
 
+fn while_clause(
+    block_expression: impl MParser<Node>,
+    expression: impl MParser<Node>,
+) -> impl MParser<Node> {
+    let block = block(block_expression, expression.clone());
+    just(Token::While)
+        .ignore_then(parenthesized(expression.clone()))
+        .map(Box::new)
+        .then(block.clone())
+        .map(|(cond, body)| RawNode::While(While { cond, body }))
+        .map_with_span(Spanned)
+}
+
 fn parser() -> impl MParser<Vec<Node>> {
     let mut block_expression = Recursive::declare();
 
@@ -196,7 +217,15 @@ fn parser() -> impl MParser<Vec<Node>> {
             .map(|((left, kind), right)| RawNode::Binop(Binop { kind, left, right }))
             .map_with_span(Spanned);
 
+        let assign = ident()
+            .map_with_span(Spanned)
+            .then_ignore(just(Token::Assign))
+            .then(expression.clone().map(Box::new))
+            .map(|(name, value)| RawNode::Assign(Let { name, value }))
+            .map_with_span(Spanned);
+
         choice((
+            assign,
             binop,
             call,
             fn_def(block_expression.clone(), expression.clone()),
@@ -205,7 +234,10 @@ fn parser() -> impl MParser<Vec<Node>> {
         ))
     });
 
-    block_expression.define(if_clause(block_expression.clone(), expression.clone()));
+    block_expression.define(choice((
+        if_clause(block_expression.clone(), expression.clone()),
+        while_clause(block_expression.clone(), expression.clone()),
+    )));
 
     fn_def(block_expression, expression)
         .repeated()

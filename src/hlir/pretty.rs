@@ -156,6 +156,17 @@ impl HlirVisitorImmut for PrettyPrint<'_, '_> {
 
                 VisitAction::Nothing
             }
+            NodeKind::Assign { name, value } => {
+                self.text(resolve_symbol(*name));
+                self.text(": ");
+                self.format_type(&value.ty);
+                self.text(" = ");
+                self.indent();
+                self.walk_node(value);
+                self.dedent();
+
+                VisitAction::Nothing
+            }
             NodeKind::Binop { op, left, right } => {
                 self.text("(");
                 self.indent();
@@ -220,6 +231,26 @@ impl HlirVisitorImmut for PrettyPrint<'_, '_> {
                     self.walk_node(if_false);
                     self.hard_break();
                 }
+
+                self.dedent();
+
+                VisitAction::Nothing
+            }
+            NodeKind::While { cond, body } => {
+                self.text("while: ");
+                self.format_type(&node.ty);
+                self.hard_break();
+                self.indent();
+
+                self.text("cond:  ");
+                self.indent();
+                self.walk_node(cond);
+                self.dedent();
+                self.hard_break();
+
+                self.text("true:  ");
+                self.walk_node(body);
+                self.hard_break();
 
                 self.dedent();
 

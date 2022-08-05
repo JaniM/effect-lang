@@ -52,3 +52,23 @@ fn unit_fn_call() {
 
     assert_eq!(interpreter.stdout.unwrap().get_ref(), b"a\nb\nc\nd\n");
 }
+
+#[test]
+fn while_loop() {
+    let source = unindent(
+        r#"
+        fn main() {
+            let x = 0;
+            while (x < 5) {
+                x = x + 1;
+                print_int(x);
+            }
+        }"#,
+    );
+
+    let mut interpreter = test_interpreter(&source);
+    interpreter.program.print();
+    interpreter.run().unwrap();
+
+    assert_eq!(interpreter.stdout.unwrap().get_ref(), b"1\n2\n3\n4\n5\n");
+}

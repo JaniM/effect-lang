@@ -295,6 +295,21 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
 
                 VisitAction::Nothing
             }
+            NodeKind::Assign { name, value } => {
+                let reg = self.next_reg();
+                self.walk_with_out(reg, value);
+
+                let idx = self
+                    .locals
+                    .iter()
+                    .rev()
+                    .position(|x| x == name)
+                    .expect("Name not found");
+                let idx = self.locals.len() - idx - 1;
+                self.inst(Instruction::StoreLocal(idx as _, reg));
+
+                VisitAction::Nothing
+            }
             NodeKind::Binop { op, left, right } => {
                 let left_reg = self.next_reg();
                 self.walk_with_out(left_reg, left);
@@ -368,6 +383,26 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
                     self.walk_node(if_false);
                     self.inst(Instruction::Jump(end_block));
                 }
+
+                self.switch_block(end_block);
+
+                VisitAction::Nothing
+            }
+            NodeKind::While { cond, body } => {
+                let cond_block = self.new_block();
+                let body_block = self.new_block();
+                let end_block = self.new_block();
+
+                self.inst(Instruction::Jump(cond_block));
+                self.switch_block(cond_block);
+
+                let cond_reg = self.next_reg();
+                self.walk_with_out(cond_reg, cond);
+                self.inst(Instruction::Branch(body_block, end_block, cond_reg));
+
+                self.switch_block(body_block);
+                self.walk_node(body);
+                self.inst(Instruction::Jump(cond_block));
 
                 self.switch_block(end_block);
 

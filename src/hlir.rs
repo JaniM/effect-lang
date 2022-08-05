@@ -56,6 +56,10 @@ pub enum NodeKind {
         value: Box<Node>,
         expr: Box<Node>,
     },
+    Assign {
+        name: Spur,
+        value: Box<Node>,
+    },
     Binop {
         op: BinopKind,
         left: Box<Node>,
@@ -69,6 +73,10 @@ pub enum NodeKind {
         cond: Box<Node>,
         if_true: Box<Node>,
         if_false: Option<Box<Node>>,
+    },
+    While {
+        cond: Box<Node>,
+        body: Box<Node>,
     },
     Block(Vec<Node>),
     Literal(Literal),
@@ -296,6 +304,10 @@ impl HlirBuilder {
                     .transpose()?
                     .map(Box::new),
             },
+            ast::RawNode::While(d) => NodeKind::While {
+                cond: self.read_node(module, *d.cond)?.into(),
+                body: self.read_block(module, d.body)?.into(),
+            },
             ast::RawNode::Binop(op) => NodeKind::Binop {
                 op: op.kind,
                 left: self.read_node(module, *op.left)?.into(),
@@ -306,12 +318,18 @@ impl HlirBuilder {
                 value: self.read_node(module, *letd.value)?.into(),
                 expr: self.unit_node().into(),
             },
+            ast::RawNode::Assign(letd) => NodeKind::Assign {
+                name: letd.name.0,
+                value: self.read_node(module, *letd.value)?.into(),
+            },
         };
 
         let ty = match &kind {
-            NodeKind::Let { .. } | NodeKind::If { .. } | NodeKind::Block(_) => {
-                self.hlir.types.unit()
-            }
+            NodeKind::Let { .. }
+            | NodeKind::Assign { .. }
+            | NodeKind::If { .. }
+            | NodeKind::While { .. }
+            | NodeKind::Block(_) => self.hlir.types.unit(),
             _ => self.unknown_type(),
         };
 

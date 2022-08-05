@@ -47,6 +47,9 @@ pub trait HlirVisitor: Sized {
                     self.walk_node(value);
                     self.walk_node(expr);
                 }
+                NodeKind::Assign { value, .. } => {
+                    self.walk_node(value);
+                }
                 NodeKind::Binop { left, right, .. } => {
                     self.walk_node(left);
                     self.walk_node(right);
@@ -67,6 +70,10 @@ pub trait HlirVisitor: Sized {
                     if let Some(if_false) = if_false {
                         self.walk_node(if_false);
                     }
+                }
+                NodeKind::While { cond, body } => {
+                    self.walk_node(cond);
+                    self.walk_node(body);
                 }
                 NodeKind::Block(nodes) => {
                     for node in nodes {
@@ -141,6 +148,9 @@ pub trait HlirVisitorImmut: Sized {
                     self.walk_node(value);
                     self.walk_node(expr);
                 }
+                NodeKind::Assign { value, .. } => {
+                    self.walk_node(value);
+                }
                 NodeKind::Binop { left, right, .. } => {
                     self.walk_node(left);
                     self.walk_node(right);
@@ -161,6 +171,10 @@ pub trait HlirVisitorImmut: Sized {
                     if let Some(if_false) = if_false {
                         self.walk_node(if_false);
                     }
+                }
+                NodeKind::While { cond, body } => {
+                    self.walk_node(cond);
+                    self.walk_node(body);
                 }
                 NodeKind::Block(nodes) => {
                     for node in nodes {

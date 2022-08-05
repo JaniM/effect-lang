@@ -15,6 +15,8 @@ enum RawToken {
     If,
     #[token("else")]
     Else,
+    #[token("while")]
+    While,
     #[token("let")]
     Let,
     #[token("=")]
@@ -55,6 +57,7 @@ pub enum Token {
     Fn,
     If,
     Else,
+    While,
     Let,
     Equals,
     LeftArrow,
@@ -104,6 +107,7 @@ impl Lexer<'_> {
             RawToken::Fn => Token::Fn,
             RawToken::If => Token::If,
             RawToken::Else => Token::Else,
+            RawToken::While => Token::While,
             RawToken::Let => Token::Let,
             RawToken::Semicolon => Token::Semicolon,
             RawToken::Colon => Token::Colon,

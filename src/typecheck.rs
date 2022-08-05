@@ -171,6 +171,19 @@ impl HlirVisitorImmut for TypecheckContext {
 
                 VisitAction::Nothing
             }
+            NodeKind::Assign { name, value } => {
+                let ty = self
+                    .names
+                    .iter()
+                    .rev()
+                    .find(|(k, _)| k == name)
+                    .map(|(_, t)| *t);
+                if let Some(ty) = ty {
+                    self.constraints.push(Equal(value.ty, ty));
+                }
+
+                VisitAction::Recurse
+            }
             NodeKind::Binop { op, left, right } => {
                 self.constraints.push(Equal(left.ty, right.ty));
                 match op {
@@ -194,6 +207,10 @@ impl HlirVisitorImmut for TypecheckContext {
                 VisitAction::Recurse
             }
             NodeKind::If { cond, .. } => {
+                self.constraints.push(Equal(cond.ty, self.types.bool()));
+                VisitAction::Recurse
+            }
+            NodeKind::While { cond, .. } => {
                 self.constraints.push(Equal(cond.ty, self.types.bool()));
                 VisitAction::Recurse
             }
