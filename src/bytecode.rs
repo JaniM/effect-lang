@@ -366,6 +366,9 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
 
                 VisitAction::Nothing
             }
+            NodeKind::Resume { arg } => {
+                todo!();
+            }
             NodeKind::If {
                 cond,
                 if_true,
@@ -462,10 +465,12 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
                 VisitAction::Nothing
             }
             NodeKind::Return(value) => {
-                let reg = self.next_reg();
-                self.walk_with_out(reg, value);
+                if let Some(value) = value {
+                    let reg = self.next_reg();
+                    self.walk_with_out(reg, value);
+                    self.inst(Instruction::Push(reg));
+                }
 
-                self.inst(Instruction::Push(reg));
                 self.inst(Instruction::Return);
 
                 let block = self.new_block();
@@ -473,6 +478,7 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
 
                 VisitAction::Nothing
             }
+            NodeKind::Handle { .. } => todo!(),
         }
     }
 }
@@ -536,8 +542,8 @@ mod test {
     use crate::{
         bytecode::optimize::simplify_function,
         hlir::{
-            name_resolve::NameResolver, simplify::Simplifier, visitor::HlirVisitor, Builtins,
-            FileId, HlirBuilder, ModuleId,
+            name_resolve::NameResolver, simplify::Simplifier, visitor::HlirVisitor, FileId,
+            HlirBuilder, ModuleId,
         },
         interpreter::standard::{load_standard_builtins, StandardPorts},
         parser::parse,
@@ -562,12 +568,10 @@ mod test {
         let mut builder = HlirBuilder::default();
         builder.read_module(FileId(0), ast).unwrap();
 
-        let builtins = Builtins::load(&builder.hlir.types, |l| {
-            load_standard_builtins::<StandardPorts>(l)
-        });
+        builder.load_builtins(|l| load_standard_builtins::<StandardPorts>(l));
 
         Simplifier.walk_hlir(&mut builder.hlir);
-        NameResolver::new(&builtins).walk_hlir(&mut builder.hlir);
+        NameResolver::new().walk_hlir(&mut builder.hlir);
 
         let module = builder.hlir.modules.get(&ModuleId(0)).unwrap();
         let fndef = module.functions.get(&hlir::FunctionId(0)).unwrap();

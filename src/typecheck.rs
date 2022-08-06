@@ -4,8 +4,9 @@ use lasso::Spur;
 
 use crate::{
     hlir::{
+        index::{Index, Item},
         visitor::{HlirVisitorImmut, VisitAction},
-        FnDef, Hlir, Literal, Node, NodeKind, Type, TypeId,
+        FnDef, Hlir, Literal, Module, ModuleId, Node, NodeKind, Type, TypeId,
     },
     parser::BinopKind,
 };
@@ -85,19 +86,19 @@ enum Constraint {
     ResultOf(TypeId, TypeId),
 }
 
+#[derive(Default)]
 pub struct TypecheckContext {
     types: TypeStore,
+    index: Index,
+    module: ModuleId,
     constraints: Vec<Constraint>,
     names: Vec<(Spur, TypeId)>,
+    resume_type: Option<TypeId>,
 }
 
 impl TypecheckContext {
-    pub fn new(types: &TypeStore) -> Self {
-        Self {
-            types: types.clone(),
-            constraints: Default::default(),
-            names: Default::default(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn apply_constraints(&self) {
@@ -149,6 +150,17 @@ impl TypecheckContext {
 }
 
 impl HlirVisitorImmut for TypecheckContext {
+    fn visit_hlir(&mut self, hlir: &Hlir) -> VisitAction {
+        self.types = hlir.types.clone();
+        self.index = hlir.construct_index();
+        VisitAction::Recurse
+    }
+
+    fn visit_module(&mut self, module: &Module) -> VisitAction {
+        self.module = module.id;
+        VisitAction::Recurse
+    }
+
     fn visit_function(&mut self, function: &FnDef) -> VisitAction {
         for arg in &function.arguments {
             self.names.push((arg.name, arg.ty));
@@ -163,6 +175,45 @@ impl HlirVisitorImmut for TypecheckContext {
     fn visit_node(&mut self, node: &Node) -> VisitAction {
         use Constraint::*;
         match &node.kind {
+            NodeKind::Handle {
+                expr,
+                handlers,
+                name,
+            } => {
+                let module = self.index.modules.get(&self.module).unwrap();
+                let group = match module.names.get(name).unwrap() {
+                    Item::EffectGroup(id) => id,
+                    Item::Fn(_) => panic!("Expected an effect group name"),
+                };
+                // Clone to satisfy borrow checker.
+                let group = self.index.effect_groups.get(group).unwrap().clone();
+                for handler in handlers {
+                    let effect = group
+                        .effects
+                        .iter()
+                        .find(|e| e.header.name == handler.name)
+                        .unwrap();
+                    let effect_type = self.types.get(effect.header.ty);
+                    self.types.replace(handler.ty, effect_type);
+
+                    for (name, arg) in std::iter::zip(&handler.arguments, &effect.arguments) {
+                        self.names.push((*name, arg.ty));
+                    }
+
+                    let old_resume =
+                        std::mem::replace(&mut self.resume_type, Some(effect.return_ty));
+
+                    self.walk_node(&handler.body);
+
+                    self.resume_type = old_resume;
+
+                    for _ in &handler.arguments {
+                        self.names.pop();
+                    }
+                }
+                self.walk_node(expr);
+                VisitAction::Nothing
+            }
             NodeKind::Let { name, value, expr } => {
                 self.walk_node(value);
                 self.names.push((*name, value.ty));
@@ -204,6 +255,13 @@ impl HlirVisitorImmut for TypecheckContext {
                     self.constraints.push(ArgumentOf(callee.ty, arg.ty, idx));
                 }
                 self.constraints.push(ResultOf(callee.ty, node.ty));
+                VisitAction::Recurse
+            }
+            NodeKind::Resume { arg } => {
+                match self.resume_type {
+                    Some(ty) => self.constraints.push(Equal(arg.ty, ty)),
+                    None => unreachable!(),
+                }
                 VisitAction::Recurse
             }
             NodeKind::If { cond, .. } => {

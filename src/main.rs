@@ -15,7 +15,7 @@ use crate::{
         FunctionBuilderCtx,
     },
     hlir::{name_resolve::NameResolver, pretty::PrettyPrint, simplify::Simplifier, HlirBuilder},
-    hlir::{pretty::print_fragments, visitor::HlirVisitor, Builtins, FileId},
+    hlir::{pretty::print_fragments, visitor::HlirVisitor, FileId},
     interpreter::{
         standard::{load_standard_builtins, StandardPorts},
         Interpreter,
@@ -55,15 +55,24 @@ macro_rules! inc {
 fn main() {
     let source = unindent(
         r#"
-        fn main() {
-            let x = foo(0);
-            print_int(x);
+        effect foo {
+            fn get_number() -> int;
+            ctl yeet(error: string);
         }
-        fn foo(c: int) -> int {
-            if (c < 5) {
-                return foo(c+1);
+        fn main() {
+            handle foo {
+                get_number() {
+                    resume(0);
+                }
+                yeet(error) {
+                    print(error);
+                    return;
+                }
             }
-            return c;
+            print_int(wow());
+        }
+        fn wow() -> int {
+            get_number();
         }
         "#,
     );
@@ -74,19 +83,18 @@ fn main() {
 
     let mut builder = HlirBuilder::default();
     builder.read_module(FileId(0), ast).unwrap();
+    builder.load_builtins(|l| load_standard_builtins::<StandardPorts>(l));
     let mut hlir = builder.hlir;
 
-    let builtins = Builtins::load(&hlir.types, |l| load_standard_builtins::<StandardPorts>(l));
-
     Simplifier.walk_hlir(&mut hlir);
-    NameResolver::new(&builtins).walk_hlir(&mut hlir);
+    NameResolver::new().walk_hlir(&mut hlir);
 
-    let mut typecheck = TypecheckContext::new(&hlir.types);
+    let mut typecheck = TypecheckContext::new();
     typecheck.walk_hlir(&mut hlir);
     typecheck.apply_constraints();
 
     {
-        let mut pretty = PrettyPrint::new(&builtins);
+        let mut pretty = PrettyPrint::new();
         pretty.walk_hlir(&mut hlir);
         println!("HIR:");
         print_fragments(&pretty.fragments);

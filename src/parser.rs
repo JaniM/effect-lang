@@ -37,6 +37,26 @@ pub struct FnDef {
     pub body: Spanned<Block>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum EffectKind {
+    Function,
+    Control,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct EffectDef {
+    pub name: Spur,
+    pub kind: EffectKind,
+    pub args: Vec<Argument>,
+    pub return_ty: Option<Spur>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct EffectGroup {
+    pub name: Spur,
+    pub effects: Vec<EffectDef>,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Call {
     pub callee: Box<Node>,
@@ -77,7 +97,24 @@ pub struct Let {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct EffectHandler {
+    pub name: Spur,
+    pub args: Vec<Argument>,
+    pub return_ty: Option<Spur>,
+    pub body: Spanned<Block>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Handle {
+    pub name: Spur,
+    pub effects: Vec<EffectHandler>,
+    pub expr: Spanned<Block>,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum RawNode {
+    Effect(EffectGroup),
+    Handle(Handle),
     FnDef(FnDef),
     Call(Call),
     Name(Spur),
@@ -88,7 +125,7 @@ pub enum RawNode {
     Binop(Binop),
     Let(Let),
     Assign(Let),
-    Return(Box<Node>),
+    Return(Option<Box<Node>>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -119,7 +156,7 @@ fn list_of<O>(base: impl MParser<O>) -> impl MParser<Vec<O>> {
         .delimited_by(just(Token::OpenRound), just(Token::CloseRound))
 }
 
-fn block(
+fn block_undelimited(
     block_expression: impl MParser<Node>,
     expression: impl MParser<Node>,
 ) -> impl MParser<Spanned<Block>> {
@@ -138,8 +175,93 @@ fn block(
     ));
 
     stmt.repeated()
-        .delimited_by(just(Token::OpenCurly), just(Token::CloseCurly))
         .map(|stmts| Block { stmts })
+        .map_with_span(Spanned)
+}
+
+fn block(
+    block_expression: impl MParser<Node>,
+    expression: impl MParser<Node>,
+) -> impl MParser<Spanned<Block>> {
+    block_undelimited(block_expression, expression)
+        .map(|x| x.0)
+        .delimited_by(just(Token::OpenCurly), just(Token::CloseCurly))
+        .map_with_span(Spanned)
+}
+
+fn effect_group() -> impl MParser<Node> {
+    let ty = ident();
+
+    let argument = ident()
+        .then(just(Token::Colon).ignore_then(ty.clone()).or_not())
+        .map(|(name, ty)| Argument { name, ty });
+
+    let kind = select! {
+        Token::Fn => EffectKind::Function,
+        Token::Ctl => EffectKind::Control,
+    };
+
+    let effect = kind
+        .then(ident())
+        .then(list_of(argument))
+        .then(just(Token::RightArrow).ignore_then(ty).or_not())
+        .then_ignore(just(Token::Semicolon))
+        .map(|(((kind, name), args), return_ty)| EffectDef {
+            name,
+            kind,
+            args,
+            return_ty,
+        });
+
+    let group = effect
+        .repeated()
+        .delimited_by(just(Token::OpenCurly), just(Token::CloseCurly));
+
+    just(Token::Effect)
+        .ignore_then(ident())
+        .then(group)
+        .map(|(name, effects)| RawNode::Effect(EffectGroup { name, effects }))
+        .map_with_span(Spanned)
+}
+
+fn handle_def(
+    block_expression: impl MParser<Node>,
+    expression: impl MParser<Node>,
+) -> impl MParser<Node> {
+    let ty = ident();
+
+    let argument = ident()
+        .then(just(Token::Colon).ignore_then(ty.clone()).or_not())
+        .map(|(name, ty)| Argument { name, ty });
+
+    let effect = ident()
+        .then(list_of(argument))
+        .then(just(Token::RightArrow).ignore_then(ty).or_not())
+        .then(block(block_expression.clone(), expression.clone()))
+        .map(|(((name, args), return_ty), body)| EffectHandler {
+            name,
+            args,
+            return_ty,
+            body,
+        });
+
+    let group = effect
+        .repeated()
+        .delimited_by(just(Token::OpenCurly), just(Token::CloseCurly));
+
+    let expr = block_undelimited(block_expression, expression);
+
+    just(Token::Handle)
+        .ignore_then(ident())
+        .then(group)
+        .then(expr)
+        .map(|((name, effects), expr)| {
+            RawNode::Handle(Handle {
+                name,
+                effects,
+                expr: expr.into(),
+            })
+        })
         .map_with_span(Spanned)
 }
 
@@ -237,8 +359,7 @@ fn parser() -> impl MParser<Vec<Node>> {
             .map_with_span(Spanned);
 
         let return_expr = just(Token::Return)
-            .ignore_then(expression.clone())
-            .map(Box::new)
+            .ignore_then(expression.clone().map(Box::new).or_not())
             .map(RawNode::Return)
             .map_with_span(Spanned);
 
@@ -256,11 +377,12 @@ fn parser() -> impl MParser<Vec<Node>> {
     block_expression.define(choice((
         if_clause(block_expression.clone(), expression.clone()),
         while_clause(block_expression.clone(), expression.clone()),
+        handle_def(block_expression.clone(), expression.clone()),
     )));
 
-    fn_def(block_expression, expression)
-        .repeated()
-        .then_ignore(end())
+    let item = choice((fn_def(block_expression, expression), effect_group()));
+
+    item.repeated().then_ignore(end())
 }
 
 pub fn parse(source: &str) -> Result<Vec<Node>, Vec<Simple<Token>>> {

@@ -9,6 +9,12 @@ type Span = Range<usize>;
 
 #[derive(Logos, Debug, PartialEq)]
 enum RawToken {
+    #[token("effect")]
+    Effect,
+    #[token("handle")]
+    Handle,
+    #[token("ctl")]
+    Ctl,
     #[token("fn")]
     Fn,
     #[token("return")]
@@ -58,6 +64,9 @@ enum RawToken {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Token {
+    Effect,
+    Handle,
+    Ctl,
     Fn,
     Return,
     If,
@@ -110,6 +119,9 @@ impl Lexer<'_> {
         let intern = |v: &str| interner.get_or_intern(v);
 
         let token = match token {
+            RawToken::Effect => Token::Effect,
+            RawToken::Handle => Token::Handle,
+            RawToken::Ctl => Token::Ctl,
             RawToken::Fn => Token::Fn,
             RawToken::Return => Token::Return,
             RawToken::If => Token::If,

@@ -13,8 +13,7 @@ use tinyvec::TinyVec;
 use crate::{
     bytecode::{program::Program, Instruction, Register, Value},
     hlir::{
-        self, name_resolve::NameResolver, simplify::Simplifier, visitor::HlirVisitor, FileId,
-        HlirBuilder,
+        name_resolve::NameResolver, simplify::Simplifier, visitor::HlirVisitor, FileId, HlirBuilder,
     },
     interpreter::standard::{load_standard_builtins, StandardPorts},
     lexer::{LexError, Lexer, Token},
@@ -85,14 +84,12 @@ impl<P: Ports> Interpreter<P> {
 
         let mut builder = HlirBuilder::default();
         builder.read_module(FileId(0), ast).unwrap();
+        builder.load_builtins(|l| load_standard_builtins::<StandardPorts>(l));
         let mut hlir = builder.hlir;
 
-        let builtins =
-            hlir::Builtins::load(&hlir.types, |l| load_standard_builtins::<StandardPorts>(l));
-
         Simplifier.walk_hlir(&mut hlir);
-        NameResolver::new(&builtins).walk_hlir(&mut hlir);
-        let mut typecheck = TypecheckContext::new(&hlir.types);
+        NameResolver::new().walk_hlir(&mut hlir);
+        let mut typecheck = TypecheckContext::new();
         typecheck.walk_hlir(&mut hlir);
         typecheck.apply_constraints();
 

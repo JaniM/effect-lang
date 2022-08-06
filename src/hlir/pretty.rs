@@ -1,14 +1,17 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::borrow::Cow;
 
 use crate::{
+    extract,
     hlir::{visitor::VisitAction, Literal},
     intern::resolve_symbol,
-    parser::BinopKind,
+    parser::{BinopKind, EffectKind},
     typecheck::TypeStore,
 };
 
 use super::{
-    visitor::HlirVisitorImmut, Builtins, FnDef, FnHeader, FunctionId, NodeKind, Type, TypeId,
+    index::{Header, Index},
+    visitor::HlirVisitorImmut,
+    EffectDef, EffectHeader, FnDef, FnHeader, NodeKind, Type, TypeId,
 };
 
 #[derive(Debug)]
@@ -18,22 +21,16 @@ pub enum Fragment<'a> {
     HardBreak,
 }
 
-#[derive(Debug)]
-pub struct PrettyPrint<'s, 'b> {
-    pub builtins: &'b Builtins,
+#[derive(Debug, Default)]
+pub struct PrettyPrint<'s> {
     pub fragments: Vec<Fragment<'s>>,
-    global: HashMap<FunctionId, FnHeader>,
+    index: Index,
     types: TypeStore,
 }
 
-impl<'s, 'b> PrettyPrint<'s, 'b> {
-    pub fn new(builtins: &'b Builtins) -> Self {
-        Self {
-            builtins,
-            fragments: Default::default(),
-            global: HashMap::new(),
-            types: Default::default(),
-        }
+impl<'s> PrettyPrint<'s> {
+    pub fn new() -> Self {
+        PrettyPrint::default()
     }
 
     fn text(&mut self, x: impl Into<Cow<'s, str>>) {
@@ -89,21 +86,57 @@ impl<'s, 'b> PrettyPrint<'s, 'b> {
     }
 }
 
-impl HlirVisitorImmut for PrettyPrint<'_, '_> {
+impl HlirVisitorImmut for PrettyPrint<'_> {
     fn visit_hlir(&mut self, hlir: &super::Hlir) -> VisitAction {
         self.types = hlir.types.clone();
+        self.index = hlir.construct_index();
         VisitAction::Recurse
     }
 
     fn visit_module(&mut self, module: &super::Module) -> VisitAction {
-        self.global = module
-            .functions
-            .values()
-            .filter_map(|v| Some((v.header.id, v.header.clone())))
-            .collect();
-
         self.text(format!("Module #{}", module.id.0));
         self.hard_break();
+
+        for group in module.effect_groups.values() {
+            self.text(format!(
+                "effect {} #{}",
+                resolve_symbol(group.name),
+                group.id.0
+            ));
+            self.indent();
+            self.hard_break();
+
+            for effect in &group.effects {
+                let EffectDef {
+                    header: EffectHeader { kind, id, name, .. },
+                    return_ty,
+                    arguments,
+                } = effect;
+
+                let name = resolve_symbol(*name);
+                self.text(match kind {
+                    EffectKind::Function => "fn",
+                    EffectKind::Control => "ctl",
+                });
+                self.text(format!(" {} #{} (", name, id.0));
+
+                for (i, arg) in arguments.iter().enumerate() {
+                    self.text(resolve_symbol(arg.name));
+                    self.text(": ");
+                    self.format_type(&arg.ty);
+                    if i < arguments.len() - 1 {
+                        self.text(", ");
+                    }
+                }
+
+                self.text(") -> ");
+                self.format_type(return_ty);
+                self.hard_break();
+            }
+
+            self.dedent();
+        }
+
         VisitAction::Recurse
     }
 
@@ -141,6 +174,52 @@ impl HlirVisitorImmut for PrettyPrint<'_, '_> {
 
     fn visit_node(&mut self, node: &super::Node) -> VisitAction {
         match &node.kind {
+            NodeKind::Handle {
+                name,
+                handlers,
+                expr,
+            } => {
+                self.text("handle ");
+                self.text(resolve_symbol(*name));
+                self.indent();
+                self.hard_break();
+
+                for handler in handlers {
+                    extract!(
+                        self.types.get(handler.ty),
+                        Type::Function { inputs, output }
+                    );
+
+                    self.text(resolve_symbol(handler.name));
+                    self.text("(");
+                    for (i, (arg, ty)) in std::iter::zip(&handler.arguments, &inputs).enumerate() {
+                        self.text(resolve_symbol(*arg));
+                        self.text(": ");
+                        self.format_type(ty);
+                        if i < handler.arguments.len() - 1 {
+                            self.text(", ");
+                        }
+                    }
+                    self.text(") -> ");
+                    self.format_type(&output);
+                    self.hard_break();
+                    self.indent();
+                    self.walk_node(&handler.body);
+                    self.dedent();
+                    self.hard_break();
+                }
+
+                self.dedent();
+                self.text("in ");
+                self.indent();
+                self.hard_break();
+
+                self.walk_node(expr);
+
+                self.dedent();
+
+                VisitAction::Nothing
+            }
             NodeKind::Let { name, value, expr } => {
                 self.text("let ");
                 self.text(resolve_symbol(*name));
@@ -206,6 +285,12 @@ impl HlirVisitorImmut for PrettyPrint<'_, '_> {
                 self.text(")");
                 VisitAction::Nothing
             }
+            NodeKind::Resume { arg } => {
+                self.text("resume(");
+                self.walk_node(arg);
+                self.text(")");
+                VisitAction::Nothing
+            }
             NodeKind::If {
                 cond,
                 if_true,
@@ -257,15 +342,11 @@ impl HlirVisitorImmut for PrettyPrint<'_, '_> {
                 VisitAction::Nothing
             }
             NodeKind::Block(nodes) => {
-                self.text("{");
-                self.indent();
                 self.hard_break();
                 for node in nodes {
                     self.walk_node(node);
                     self.hard_break();
                 }
-                self.dedent();
-                self.text("}");
                 self.hard_break();
                 VisitAction::Nothing
             }
@@ -289,7 +370,7 @@ impl HlirVisitorImmut for PrettyPrint<'_, '_> {
                 VisitAction::Recurse
             }
             NodeKind::Builtin(idx) => {
-                let builtin = &self.builtins.builtins_ord[*idx];
+                let builtin = &self.index.builtins.builtins_ord[*idx];
                 let name = resolve_symbol(builtin.name);
                 self.text(name);
                 self.text(": ");
@@ -297,19 +378,34 @@ impl HlirVisitorImmut for PrettyPrint<'_, '_> {
                 VisitAction::Recurse
             }
             NodeKind::Function(id) => {
-                let header = self.global.get(id).unwrap();
-                let name = header.name.map_or("", resolve_symbol);
-                self.text(name);
+                let header = self.index.functions.get(id).unwrap();
+                match header {
+                    Header::Fn(header) => {
+                        let name = header.name.map_or("", resolve_symbol);
+                        self.text(name);
+                    }
+                    Header::Effect(header) => {
+                        let name = resolve_symbol(header.name);
+                        let kind = match header.kind {
+                            EffectKind::Function => "eff fn ",
+                            EffectKind::Control => "eff ctl ",
+                        };
+                        self.text(kind);
+                        self.text(name);
+                    }
+                }
                 self.text(": ");
                 self.format_type(&node.ty);
                 VisitAction::Recurse
             }
             NodeKind::Return(value) => {
                 self.text("return");
-                self.text(" ");
-                self.indent();
-                self.walk_node(value);
-                self.dedent();
+                if let Some(value) = value {
+                    self.text(" ");
+                    self.indent();
+                    self.walk_node(value);
+                    self.dedent();
+                }
 
                 VisitAction::Nothing
             }

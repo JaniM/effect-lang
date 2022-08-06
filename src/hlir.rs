@@ -1,31 +1,38 @@
+pub mod index;
 pub mod name_resolve;
 pub mod pretty;
 pub mod simplify;
 pub mod visitor;
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use lasso::Spur;
 
 use crate::inc;
 use crate::intern::INTERNER;
-use crate::parser as ast;
 use crate::parser::BinopKind;
+use crate::parser::{self as ast, EffectKind};
 use crate::typecheck::TypeStore;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+use self::index::Index;
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FileId(pub usize);
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Span(pub FileId, pub usize, pub usize);
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ModuleId(pub usize);
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FunctionId(pub usize);
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct EffectGroupId(pub usize);
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TypeId(pub usize);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -50,6 +57,14 @@ pub enum Literal {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct Handler {
+    pub name: Spur,
+    pub arguments: Vec<Spur>,
+    pub body: Node,
+    pub ty: TypeId,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum NodeKind {
     Let {
         name: Spur,
@@ -69,6 +84,9 @@ pub enum NodeKind {
         callee: Box<Node>,
         args: Vec<Node>,
     },
+    Resume {
+        arg: Box<Node>,
+    },
     If {
         cond: Box<Node>,
         if_true: Box<Node>,
@@ -78,7 +96,12 @@ pub enum NodeKind {
         cond: Box<Node>,
         body: Box<Node>,
     },
-    Return(Box<Node>),
+    Handle {
+        name: Spur,
+        handlers: Vec<Handler>,
+        expr: Box<Node>,
+    },
+    Return(Option<Box<Node>>),
     Block(Vec<Node>),
     Literal(Literal),
     Name(Spur),
@@ -115,17 +138,41 @@ pub struct FnDef {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct EffectHeader {
+    pub kind: EffectKind,
+    pub id: FunctionId,
+    pub name: Spur,
+    pub ty: TypeId,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EffectDef {
+    pub header: EffectHeader,
+    pub arguments: Vec<FnArgument>,
+    pub return_ty: TypeId,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EffectGroup {
+    pub id: EffectGroupId,
+    pub name: Spur,
+    pub effects: Vec<EffectDef>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Module {
     pub file: FileId,
     pub id: ModuleId,
     pub name: Option<Spur>,
     pub functions: HashMap<FunctionId, FnDef>,
+    pub effect_groups: HashMap<EffectGroupId, EffectGroup>,
 }
 
 #[derive(Default, Debug)]
 pub struct Hlir {
     pub modules: HashMap<ModuleId, Module>,
     pub types: TypeStore,
+    pub builtins: Rc<Builtins>,
 }
 
 #[derive(Default)]
@@ -133,6 +180,7 @@ pub struct HlirBuilder {
     pub hlir: Hlir,
     module_id_counter: usize,
     func_id_counter: usize,
+    effect_group_id_counter: usize,
 }
 
 #[derive(Debug)]
@@ -140,7 +188,18 @@ pub enum HlirBuildError {
     InvalidTopLevel(Span),
 }
 
+impl Hlir {
+    pub fn construct_index(&self) -> Index {
+        Index::from_hlir(self)
+    }
+}
+
 impl HlirBuilder {
+    pub fn load_builtins(&mut self, f: impl FnOnce(&mut BuiltinLoader)) {
+        let builtins = Builtins::load(&self.hlir.types, f);
+        self.hlir.builtins = builtins.into();
+    }
+
     pub fn read_module(
         &mut self,
         file: FileId,
@@ -151,6 +210,7 @@ impl HlirBuilder {
             id: ModuleId(inc!(self.module_id_counter)),
             name: None,
             functions: HashMap::new(),
+            effect_groups: HashMap::new(),
         };
 
         self.read_ast(&mut module, node)?;
@@ -214,6 +274,53 @@ impl HlirBuilder {
                 };
 
                 module.functions.insert(func.header.id, func);
+            }
+            ast::RawNode::Effect(group) => {
+                let mut effects = Vec::new();
+                for def in group.effects {
+                    let arguments: Vec<_> = def
+                        .args
+                        .into_iter()
+                        .map(|x| FnArgument {
+                            name: x.name,
+                            ty: match x.ty {
+                                Some(key) => self.hlir.types.insert(Type::Name(key)),
+                                None => self.unknown_type(),
+                            },
+                        })
+                        .collect();
+
+                    let output = match def.return_ty {
+                        Some(key) => self.hlir.types.insert(Type::Name(key)),
+                        None => self.hlir.types.unit(),
+                    };
+
+                    let ty = self.hlir.types.insert(Type::Function {
+                        inputs: arguments.iter().map(|x| x.ty).collect(),
+                        output,
+                    });
+
+                    let header = EffectHeader {
+                        kind: def.kind,
+                        id: FunctionId(inc!(self.func_id_counter)),
+                        name: def.name,
+                        ty,
+                    };
+
+                    let effect = EffectDef {
+                        header,
+                        arguments,
+                        return_ty: output,
+                    };
+                    effects.push(effect);
+                }
+
+                let group = EffectGroup {
+                    id: EffectGroupId(inc!(self.effect_group_id_counter)),
+                    name: group.name,
+                    effects,
+                };
+                module.effect_groups.insert(group.id, group);
             }
             _ => {
                 return Err(HlirBuildError::InvalidTopLevel(Span(
@@ -289,6 +396,27 @@ impl HlirBuilder {
         ast::Spanned(node, span): ast::Spanned<ast::RawNode>,
     ) -> Result<Node, HlirBuildError> {
         let kind = match node {
+            ast::RawNode::Effect(_) => todo!(),
+            ast::RawNode::Handle(hdl) => {
+                let handlers = hdl
+                    .effects
+                    .into_iter()
+                    .map(|x| {
+                        Ok(Handler {
+                            name: x.name,
+                            arguments: x.args.into_iter().map(|x| x.name).collect(),
+                            body: self.read_block(module, x.body)?,
+                            ty: self.unknown_type(),
+                        })
+                    })
+                    .collect::<Result<_, _>>()?;
+
+                NodeKind::Handle {
+                    name: hdl.name,
+                    handlers,
+                    expr: self.read_block(module, hdl.expr)?.into(),
+                }
+            }
             ast::RawNode::FnDef(_) => todo!(),
             ast::RawNode::Call(call) => NodeKind::Call {
                 callee: self.read_node(module, *call.callee)?.into(),
@@ -328,11 +456,17 @@ impl HlirBuilder {
                 name: letd.name.0,
                 value: self.read_node(module, *letd.value)?.into(),
             },
-            ast::RawNode::Return(value) => NodeKind::Return(self.read_node(module, *value)?.into()),
+            ast::RawNode::Return(value) => NodeKind::Return(
+                value
+                    .map(|x| self.read_node(module, *x))
+                    .transpose()?
+                    .map(Box::new),
+            ),
         };
 
         let ty = match &kind {
-            NodeKind::Let { .. }
+            NodeKind::Handle { .. }
+            | NodeKind::Let { .. }
             | NodeKind::Assign { .. }
             | NodeKind::If { .. }
             | NodeKind::While { .. }
@@ -361,14 +495,14 @@ impl HlirBuilder {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BuiltinIR {
     pub name: Spur,
     pub ty: TypeId,
     pub idx: usize,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct Builtins {
     pub builtins: HashMap<Spur, BuiltinIR>,
     pub builtins_ord: Vec<BuiltinIR>,
@@ -431,12 +565,10 @@ mod test {
         let mut builder = HlirBuilder::default();
         builder.read_module(FileId(0), ast).unwrap();
 
-        let builtins = Builtins::load(&builder.hlir.types, |l| {
-            load_standard_builtins::<StandardPorts>(l)
-        });
+        builder.load_builtins(|l| load_standard_builtins::<StandardPorts>(l));
 
         Simplifier.walk_hlir(&mut builder.hlir);
-        NameResolver::new(&builtins).walk_hlir(&mut builder.hlir);
+        NameResolver::new().walk_hlir(&mut builder.hlir);
 
         let key = |v| INTERNER.get(v).unwrap();
 
@@ -486,7 +618,8 @@ mod test {
                 file: FileId(0),
                 id: ModuleId(0),
                 name: None,
-                functions
+                functions,
+                effect_groups: Default::default(),
             }
         );
     }
@@ -504,7 +637,7 @@ mod test {
         });
 
         Simplifier.walk_hlir(&mut builder.hlir);
-        NameResolver::new(&builtins).walk_hlir(&mut builder.hlir);
+        NameResolver::new().walk_hlir(&mut builder.hlir);
 
         let key = |v: &str| INTERNER.get(v).unwrap();
 
@@ -555,7 +688,8 @@ mod test {
                 file: FileId(0),
                 id: ModuleId(0),
                 name: None,
-                functions
+                functions,
+                effect_groups: Default::default(),
             }
         );
     }

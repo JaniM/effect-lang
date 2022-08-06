@@ -43,6 +43,16 @@ pub trait HlirVisitor: Sized {
 
         match action {
             VisitAction::Recurse => match &mut node.kind {
+                NodeKind::Handle {
+                    name,
+                    handlers,
+                    expr,
+                } => {
+                    for handler in handlers {
+                        self.walk_node(&mut handler.body);
+                    }
+                    self.walk_node(expr);
+                }
                 NodeKind::Let { value, expr, .. } => {
                     self.walk_node(value);
                     self.walk_node(expr);
@@ -59,6 +69,9 @@ pub trait HlirVisitor: Sized {
                     for arg in args {
                         self.walk_node(arg);
                     }
+                }
+                NodeKind::Resume { arg } => {
+                    self.walk_node(arg);
                 }
                 NodeKind::If {
                     cond,
@@ -80,7 +93,11 @@ pub trait HlirVisitor: Sized {
                         self.walk_node(node);
                     }
                 }
-                NodeKind::Return(v) => self.walk_node(v),
+                NodeKind::Return(v) => {
+                    if let Some(v) = v {
+                        self.walk_node(v);
+                    }
+                }
                 NodeKind::Literal(_) => {}
                 NodeKind::Name(_) => {}
                 NodeKind::Builtin(_) => {}
@@ -145,6 +162,16 @@ pub trait HlirVisitorImmut: Sized {
 
         match action {
             VisitAction::Recurse => match &node.kind {
+                NodeKind::Handle {
+                    name,
+                    handlers,
+                    expr,
+                } => {
+                    for handler in handlers {
+                        self.walk_node(&handler.body);
+                    }
+                    self.walk_node(expr);
+                }
                 NodeKind::Let { value, expr, .. } => {
                     self.walk_node(value);
                     self.walk_node(expr);
@@ -161,6 +188,9 @@ pub trait HlirVisitorImmut: Sized {
                     for arg in args {
                         self.walk_node(arg);
                     }
+                }
+                NodeKind::Resume { arg } => {
+                    self.walk_node(arg);
                 }
                 NodeKind::If {
                     cond,
@@ -182,7 +212,11 @@ pub trait HlirVisitorImmut: Sized {
                         self.walk_node(node);
                     }
                 }
-                NodeKind::Return(v) => self.walk_node(v),
+                NodeKind::Return(v) => {
+                    if let Some(v) = v {
+                        self.walk_node(v);
+                    }
+                }
                 NodeKind::Literal(_) => {}
                 NodeKind::Name(_) => {}
                 NodeKind::Builtin(_) => {}
