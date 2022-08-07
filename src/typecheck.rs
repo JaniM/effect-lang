@@ -6,42 +6,86 @@ use crate::{
     hlir::{
         index::{Index, Item},
         visitor::{HlirVisitorImmut, VisitAction},
-        FnDef, Hlir, Literal, Module, ModuleId, Node, NodeKind, Type, TypeId,
+        FnDef, Hlir, Literal, Module, ModuleId, Node, NodeKind,
     },
     parser::BinopKind,
 };
 
-/// TODO: Figure out a way to do deduplication without duplicating the items.
+/// An opaque id used with [TypeStore].
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TypeId(usize);
+
+/// A type representing all possible types.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Type {
+    /// The type of this node is currently unknown. Used as a type inference point.
+    Unknown,
+    /// A currently unresolved type name.
+    Name(Spur),
+    Function {
+        inputs: Vec<TypeId>,
+        output: TypeId,
+    },
+    String,
+    Int,
+    Bool,
+    Unit,
+}
+
+// TODO: Figure out a way to do deduplication without duplicating the items.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct TypeStoreInternal {
     types: Vec<Type>,
     dedup: HashMap<Type, TypeId>,
 }
 
+/// Stores types in an opaque, easily modifiable/queryable way. Produces a [TypeId] for each
+/// inserted type.
+///
+/// It is generally expected that a [Node]'s [TypeId] is *never* changed.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TypeStore(Rc<RefCell<TypeStoreInternal>>);
 
+impl TypeId {
+    pub fn into_inner(self) -> usize {
+        self.0
+    }
+
+    #[cfg(test)]
+    pub fn new(id: usize) -> Self {
+        Self(id)
+    }
+}
+
 impl TypeStore {
+    /// Get a deduplicated unit type.
     pub fn unit(&self) -> TypeId {
         self.insert(Type::Unit)
     }
 
+    /// Get a deduplicated boolean type.
     pub fn bool(&self) -> TypeId {
         self.insert(Type::Bool)
     }
 
+    /// Get a deduplicated integer type.
     pub fn int(&self) -> TypeId {
         self.insert(Type::Int)
     }
 
+    /// Get a deduplicated string type.
     pub fn string(&self) -> TypeId {
         self.insert(Type::String)
     }
 
+    /// Get a new unknown type. This will always be unique. Used to produce a type inference point
+    /// in the [Hlir] tree.
     pub fn unknown_type(&self) -> TypeId {
         self.insert_nodedup(Type::Unknown)
     }
 
+    /// Inserts a new type to the store, deduplicating it. Since unknown types must not be
+    /// deduplicated, this function will panic if `ty == `[`Type::Unknown`].
     pub fn insert(&self, ty: Type) -> TypeId {
         assert_ne!(ty, Type::Unknown);
         let mut store = self.0.borrow_mut();
@@ -56,6 +100,7 @@ impl TypeStore {
         id
     }
 
+    /// Insertd a new type to the store.
     pub fn insert_nodedup(&self, ty: Type) -> TypeId {
         let mut store = self.0.borrow_mut();
 
@@ -64,6 +109,8 @@ impl TypeStore {
         id
     }
 
+    /// Get a type from the store. Clones the type, so modifying it directly will have no effect.
+    /// Use [`Self::replace()`] to update it.
     pub fn get(&self, id: TypeId) -> Type {
         let store = self.0.borrow();
         store
@@ -73,16 +120,23 @@ impl TypeStore {
             .clone()
     }
 
+    /// Replaces the type `id` refers to.
     fn replace(&self, id: TypeId, ty: Type) {
         let mut store = self.0.borrow_mut();
         store.types[id.0] = ty;
     }
 }
 
+/// Represents a type constraint. Used by [`TypecheckContext::apply_constraints()`].
 #[derive(Debug)]
 enum Constraint {
+    /// The two types must be equal.
     Equal(TypeId, TypeId),
+    /// function, argument, index
+    /// The argument is used as a parameter to function at index.
     ArgumentOf(TypeId, TypeId, usize),
+    /// function, result
+    /// The return type of function is result.
     ResultOf(TypeId, TypeId),
 }
 

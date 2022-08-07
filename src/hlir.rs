@@ -2,6 +2,7 @@ pub mod index;
 pub mod name_resolve;
 pub mod pretty;
 pub mod simplify;
+mod test;
 pub mod visitor;
 
 use std::collections::HashMap;
@@ -13,7 +14,7 @@ use crate::inc;
 use crate::intern::INTERNER;
 use crate::parser::BinopKind;
 use crate::parser::{self as ast, EffectKind};
-use crate::typecheck::TypeStore;
+use crate::typecheck::{Type, TypeId, TypeStore};
 
 use self::index::Index;
 
@@ -32,23 +33,11 @@ pub struct FunctionId(pub usize);
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct EffectGroupId(pub usize);
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub struct TypeId(pub usize);
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Type {
-    Unknown,
-    Function { inputs: Vec<TypeId>, output: TypeId },
-    String,
-    Int,
-    Bool,
-    Unit,
-    Name(Spur),
-}
-
+/// Block is a flat sequence of expressions, evaluated in order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Block(Vec<Node>);
 
+/// A literal value, known directly from parsing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Literal {
     String(Spur),
@@ -56,11 +45,16 @@ pub enum Literal {
     Bool(bool),
 }
 
+/// A definition of an effect handler.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Handler {
+    /// Name of the handled effect.
     pub name: Spur,
+    /// Names of the arguments passed to this effect handler.
     pub arguments: Vec<Spur>,
+    /// The expression evaluated when this handler is executed.
     pub body: Node,
+    /// Type of this effect handler. Should resolve to [`Type::Function`].
     pub ty: TypeId,
 }
 
@@ -116,6 +110,8 @@ pub struct Node {
     pub source_span: Span,
 }
 
+/// The "header" of a function. Represents all useful static information about it for index/query
+/// purposes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FnHeader {
     pub id: FunctionId,
@@ -123,12 +119,17 @@ pub struct FnHeader {
     pub ty: TypeId,
 }
 
+/// Represents a single argument to a function.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FnArgument {
     pub name: Spur,
     pub ty: TypeId,
 }
 
+/// Represents a full function definition, including its header and the actual implementation.
+///
+/// TODO: Currently duplicates argument and the return types from the actual type of the function.
+/// This seems.. less than great, leading to data mangling to keep the state consistent.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FnDef {
     pub header: FnHeader,
@@ -137,6 +138,8 @@ pub struct FnDef {
     pub body: Node,
 }
 
+/// The "header" of an effect. Represents all useful static information about it for index/query
+/// purposes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EffectHeader {
     pub kind: EffectKind,
@@ -152,6 +155,7 @@ pub struct EffectDef {
     pub return_ty: TypeId,
 }
 
+/// Represents a group of effects, ie. an `effect` item in the language.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EffectGroup {
     pub id: EffectGroupId,
@@ -159,6 +163,7 @@ pub struct EffectGroup {
     pub effects: Vec<EffectDef>,
 }
 
+/// Represents everything there is to know about a module.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Module {
     pub file: FileId,
@@ -168,6 +173,7 @@ pub struct Module {
     pub effect_groups: HashMap<EffectGroupId, EffectGroup>,
 }
 
+/// The top-level structure representing the entire program.
 #[derive(Default, Debug)]
 pub struct Hlir {
     pub modules: HashMap<ModuleId, Module>,
@@ -175,6 +181,7 @@ pub struct Hlir {
     pub builtins: Rc<Builtins>,
 }
 
+/// A helper structure for building an [`Hlir`].
 #[derive(Default)]
 pub struct HlirBuilder {
     pub hlir: Hlir,
@@ -189,17 +196,22 @@ pub enum HlirBuildError {
 }
 
 impl Hlir {
+    /// Construct an [`Index`] for this Hlir.
     pub fn construct_index(&self) -> Index {
         Index::from_hlir(self)
     }
 }
 
 impl HlirBuilder {
+    /// Load builtin type and name information to the structure. You want to call this before
+    /// analyzing the Hlir.
     pub fn load_builtins(&mut self, f: impl FnOnce(&mut BuiltinLoader)) {
         let builtins = Builtins::load(&self.hlir.types, f);
         self.hlir.builtins = builtins.into();
     }
 
+    /// Reads a single module, aka a file. Use this to convert the [AST][ast::Node] of a single
+    /// file into the Hlir structure.
     pub fn read_module(
         &mut self,
         file: FileId,
@@ -238,89 +250,10 @@ impl HlirBuilder {
     ) -> Result<(), HlirBuildError> {
         match node {
             ast::RawNode::FnDef(def) => {
-                let arguments: Vec<_> = def
-                    .args
-                    .into_iter()
-                    .map(|x| FnArgument {
-                        name: x.name,
-                        ty: match x.ty {
-                            Some(key) => self.hlir.types.insert(Type::Name(key)),
-                            None => self.unknown_type(),
-                        },
-                    })
-                    .collect();
-
-                let output = match def.return_ty {
-                    Some(key) => self.hlir.types.insert(Type::Name(key)),
-                    None => self.hlir.types.unit(),
-                };
-
-                let ty = self.hlir.types.insert(Type::Function {
-                    inputs: arguments.iter().map(|x| x.ty).collect(),
-                    output,
-                });
-
-                let header = FnHeader {
-                    id: FunctionId(inc!(self.func_id_counter)),
-                    name: def.name,
-                    ty,
-                };
-
-                let func = FnDef {
-                    header,
-                    arguments,
-                    return_ty: output,
-                    body: self.read_block(module, def.body)?,
-                };
-
-                module.functions.insert(func.header.id, func);
+                self.read_top_level_function(def, module)?;
             }
             ast::RawNode::Effect(group) => {
-                let mut effects = Vec::new();
-                for def in group.effects {
-                    let arguments: Vec<_> = def
-                        .args
-                        .into_iter()
-                        .map(|x| FnArgument {
-                            name: x.name,
-                            ty: match x.ty {
-                                Some(key) => self.hlir.types.insert(Type::Name(key)),
-                                None => self.unknown_type(),
-                            },
-                        })
-                        .collect();
-
-                    let output = match def.return_ty {
-                        Some(key) => self.hlir.types.insert(Type::Name(key)),
-                        None => self.hlir.types.unit(),
-                    };
-
-                    let ty = self.hlir.types.insert(Type::Function {
-                        inputs: arguments.iter().map(|x| x.ty).collect(),
-                        output,
-                    });
-
-                    let header = EffectHeader {
-                        kind: def.kind,
-                        id: FunctionId(inc!(self.func_id_counter)),
-                        name: def.name,
-                        ty,
-                    };
-
-                    let effect = EffectDef {
-                        header,
-                        arguments,
-                        return_ty: output,
-                    };
-                    effects.push(effect);
-                }
-
-                let group = EffectGroup {
-                    id: EffectGroupId(inc!(self.effect_group_id_counter)),
-                    name: group.name,
-                    effects,
-                };
-                module.effect_groups.insert(group.id, group);
+                self.read_top_level_effect_group(group, module);
             }
             _ => {
                 return Err(HlirBuildError::InvalidTopLevel(Span(
@@ -330,6 +263,92 @@ impl HlirBuilder {
                 )))
             }
         }
+        Ok(())
+    }
+
+    fn read_top_level_effect_group(&mut self, group: ast::EffectGroup, module: &mut Module) {
+        let mut effects = Vec::new();
+        for def in group.effects {
+            let arguments: Vec<_> = def
+                .args
+                .into_iter()
+                .map(|x| FnArgument {
+                    name: x.name,
+                    ty: match x.ty {
+                        Some(key) => self.hlir.types.insert(Type::Name(key)),
+                        None => self.unknown_type(),
+                    },
+                })
+                .collect();
+
+            let output = match def.return_ty {
+                Some(key) => self.hlir.types.insert(Type::Name(key)),
+                None => self.hlir.types.unit(),
+            };
+
+            let ty = self.hlir.types.insert(Type::Function {
+                inputs: arguments.iter().map(|x| x.ty).collect(),
+                output,
+            });
+
+            let header = EffectHeader {
+                kind: def.kind,
+                id: FunctionId(inc!(self.func_id_counter)),
+                name: def.name,
+                ty,
+            };
+
+            let effect = EffectDef {
+                header,
+                arguments,
+                return_ty: output,
+            };
+            effects.push(effect);
+        }
+        let group = EffectGroup {
+            id: EffectGroupId(inc!(self.effect_group_id_counter)),
+            name: group.name,
+            effects,
+        };
+        module.effect_groups.insert(group.id, group);
+    }
+
+    fn read_top_level_function(
+        &mut self,
+        def: ast::FnDef,
+        module: &mut Module,
+    ) -> Result<(), HlirBuildError> {
+        let arguments: Vec<_> = def
+            .args
+            .into_iter()
+            .map(|x| FnArgument {
+                name: x.name,
+                ty: match x.ty {
+                    Some(key) => self.hlir.types.insert(Type::Name(key)),
+                    None => self.unknown_type(),
+                },
+            })
+            .collect();
+        let output = match def.return_ty {
+            Some(key) => self.hlir.types.insert(Type::Name(key)),
+            None => self.hlir.types.unit(),
+        };
+        let ty = self.hlir.types.insert(Type::Function {
+            inputs: arguments.iter().map(|x| x.ty).collect(),
+            output,
+        });
+        let header = FnHeader {
+            id: FunctionId(inc!(self.func_id_counter)),
+            name: def.name,
+            ty,
+        };
+        let func = FnDef {
+            header,
+            arguments,
+            return_ty: output,
+            body: self.read_block(module, def.body)?,
+        };
+        module.functions.insert(func.header.id, func);
         Ok(())
     }
 
@@ -355,6 +374,10 @@ impl HlirBuilder {
         Ok(node)
     }
 
+    /// Folds lets into a tree structure.
+    /// For example, `let a = 0; use(a); use(1);` becomes `let a = 0 in { use(a); use(b); }`
+    ///
+    /// TODO: This should absolutely be done in the parser.
     fn fold_nodes(
         &mut self,
         module: &mut Module,
@@ -397,26 +420,7 @@ impl HlirBuilder {
     ) -> Result<Node, HlirBuildError> {
         let kind = match node {
             ast::RawNode::Effect(_) => todo!(),
-            ast::RawNode::Handle(hdl) => {
-                let handlers = hdl
-                    .effects
-                    .into_iter()
-                    .map(|x| {
-                        Ok(Handler {
-                            name: x.name,
-                            arguments: x.args.into_iter().map(|x| x.name).collect(),
-                            body: self.read_block(module, x.body)?,
-                            ty: self.unknown_type(),
-                        })
-                    })
-                    .collect::<Result<_, _>>()?;
-
-                NodeKind::Handle {
-                    name: hdl.name,
-                    handlers,
-                    expr: self.read_block(module, hdl.expr)?.into(),
-                }
-            }
+            ast::RawNode::Handle(hdl) => self.read_handle_expr(hdl, module)?,
             ast::RawNode::FnDef(_) => todo!(),
             ast::RawNode::Call(call) => NodeKind::Call {
                 callee: self.read_node(module, *call.callee)?.into(),
@@ -482,6 +486,30 @@ impl HlirBuilder {
         })
     }
 
+    fn read_handle_expr(
+        &mut self,
+        hdl: ast::Handle,
+        module: &mut Module,
+    ) -> Result<NodeKind, HlirBuildError> {
+        let handlers = hdl
+            .effects
+            .into_iter()
+            .map(|x| {
+                Ok(Handler {
+                    name: x.name,
+                    arguments: x.args.into_iter().map(|x| x.name).collect(),
+                    body: self.read_block(module, x.body)?,
+                    ty: self.unknown_type(),
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(NodeKind::Handle {
+            name: hdl.name,
+            handlers,
+            expr: self.read_block(module, hdl.expr)?.into(),
+        })
+    }
+
     fn unknown_type(&mut self) -> TypeId {
         self.hlir.types.unknown_type()
     }
@@ -495,6 +523,7 @@ impl HlirBuilder {
     }
 }
 
+/// Represents the static information known about a builtin.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuiltinIR {
     pub name: Spur,
@@ -544,153 +573,5 @@ impl<P: crate::interpreter::Ports> crate::interpreter::builtin::LoadBuiltin<P>
         };
         self.builtins.builtins.insert(key, ir.clone());
         self.builtins.builtins_ord.push(ir);
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use crate::{
-        hlir::{name_resolve::NameResolver, simplify::Simplifier, visitor::HlirVisitor},
-        interpreter::standard::{load_standard_builtins, StandardPorts},
-        parser::parse,
-    };
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn simple() {
-        let source = r#"fn main() { print("hello"); }"#;
-        let ast = parse(source).unwrap();
-
-        let mut builder = HlirBuilder::default();
-        builder.read_module(FileId(0), ast).unwrap();
-
-        builder.load_builtins(|l| load_standard_builtins::<StandardPorts>(l));
-
-        Simplifier.walk_hlir(&mut builder.hlir);
-        NameResolver::new().walk_hlir(&mut builder.hlir);
-
-        let key = |v| INTERNER.get(v).unwrap();
-
-        let types = builder.hlir.types;
-        let module = builder.hlir.modules.get(&ModuleId(0)).unwrap();
-
-        use NodeKind::*;
-
-        let unit = types.unit();
-
-        let func = FnDef {
-            header: FnHeader {
-                id: FunctionId(0),
-                name: Some(key("main")),
-                ty: types.insert(Type::Function {
-                    inputs: vec![],
-                    output: unit,
-                }),
-            },
-            arguments: vec![],
-            return_ty: unit,
-            body: Node {
-                kind: Call {
-                    callee: Node {
-                        kind: Builtin(0),
-                        ty: types.insert(Type::Function {
-                            inputs: vec![types.string()],
-                            output: unit,
-                        }),
-                        source_span: Span(FileId(0), 12, 17),
-                    }
-                    .into(),
-                    args: vec![Node {
-                        kind: Literal(self::Literal::String(key("hello"))),
-                        ty: TypeId(3),
-                        source_span: Span(FileId(0), 18, 25),
-                    }],
-                },
-                ty: TypeId(4),
-                source_span: Span(FileId(0), 12, 26),
-            },
-        };
-        let functions = HashMap::from([(FunctionId(0), func)]);
-        assert_eq!(
-            module,
-            &Module {
-                file: FileId(0),
-                id: ModuleId(0),
-                name: None,
-                functions,
-                effect_groups: Default::default(),
-            }
-        );
-    }
-
-    #[test]
-    fn let_fold() {
-        let source = r#"fn main() { let a = 1; a; }"#;
-        let ast = parse(source).unwrap();
-
-        let mut builder = HlirBuilder::default();
-        builder.read_module(FileId(0), ast).unwrap();
-
-        let builtins = Builtins::load(&builder.hlir.types, |l| {
-            load_standard_builtins::<StandardPorts>(l)
-        });
-
-        Simplifier.walk_hlir(&mut builder.hlir);
-        NameResolver::new().walk_hlir(&mut builder.hlir);
-
-        let key = |v: &str| INTERNER.get(v).unwrap();
-
-        let types = &builder.hlir.types;
-        let module = builder.hlir.modules.get(&ModuleId(0)).unwrap();
-
-        use NodeKind::*;
-
-        let unit = types.unit();
-
-        let func = FnDef {
-            header: FnHeader {
-                id: FunctionId(0),
-                name: Some(key("main")),
-                ty: types.insert(Type::Function {
-                    inputs: vec![],
-                    output: unit,
-                }),
-            },
-            arguments: vec![],
-            return_ty: unit,
-            body: Node {
-                kind: Let {
-                    name: key("a"),
-                    value: Node {
-                        kind: Literal(self::Literal::Int(1)),
-                        ty: TypeId(2),
-                        source_span: Span(FileId(0), 20, 21),
-                    }
-                    .into(),
-                    expr: Node {
-                        kind: Name(key("a")),
-                        ty: TypeId(3),
-                        source_span: Span(FileId(0), 23, 24),
-                    }
-                    .into(),
-                },
-                ty: unit,
-                source_span: Span(FileId(0), 12, 22),
-            },
-        };
-
-        println!("{:?}", builder.hlir);
-        let functions = HashMap::from([(FunctionId(0), func)]);
-        assert_eq!(
-            module,
-            &Module {
-                file: FileId(0),
-                id: ModuleId(0),
-                name: None,
-                functions,
-                effect_groups: Default::default(),
-            }
-        );
     }
 }

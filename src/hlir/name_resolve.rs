@@ -2,13 +2,13 @@ use lasso::Spur;
 
 use crate::{
     intern::{resolve_symbol, INTERNER},
-    typecheck::TypeStore,
+    typecheck::{Type, TypeId, TypeStore},
 };
 
 use super::{
     index::{Header, Index, Item},
     visitor::{HlirVisitor, VisitAction},
-    Literal, ModuleId, NodeKind, Type, TypeId,
+    Literal, ModuleId, NodeKind,
 };
 
 #[derive(Default)]

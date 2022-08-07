@@ -72,7 +72,7 @@ fn main() {
             print_int(wow());
         }
         fn wow() -> int {
-            get_number();
+            return get_number();
         }
         "#,
     );

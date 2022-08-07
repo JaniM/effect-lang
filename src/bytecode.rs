@@ -16,11 +16,11 @@ use crate::{
     hlir::{
         self,
         visitor::{HlirVisitorImmut, VisitAction},
-        FnDef, Node, NodeKind, Type,
+        FnDef, Node, NodeKind,
     },
     intern::resolve_symbol,
     parser::BinopKind,
-    typecheck::TypeStore,
+    typecheck::{Type, TypeStore},
 };
 
 #[derive(Clone, Debug, DebugPls, PartialEq)]

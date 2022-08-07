@@ -5,13 +5,13 @@ use crate::{
     hlir::{visitor::VisitAction, Literal},
     intern::resolve_symbol,
     parser::{BinopKind, EffectKind},
-    typecheck::TypeStore,
+    typecheck::{Type, TypeId, TypeStore},
 };
 
 use super::{
     index::{Header, Index},
     visitor::HlirVisitorImmut,
-    EffectDef, EffectHeader, FnDef, FnHeader, NodeKind, Type, TypeId,
+    EffectDef, EffectHeader, FnDef, FnHeader, NodeKind,
 };
 
 #[derive(Debug)]
@@ -53,7 +53,7 @@ impl<'s> PrettyPrint<'s> {
         let ty = self.types.get(*id);
         match ty {
             Type::Unknown => {
-                self.text(format!("?{}", id.0));
+                self.text(format!("?{}", id.into_inner()));
             }
             Type::Function { inputs, output } => {
                 self.text("(");

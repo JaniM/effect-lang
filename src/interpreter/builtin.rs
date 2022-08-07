@@ -2,8 +2,8 @@ use std::{marker::PhantomData, rc::Rc};
 
 use crate::{
     bytecode::Value,
-    hlir::{Type, TypeId},
     typecheck::TypeStore,
+    typecheck::{Type, TypeId},
 };
 
 use super::{Interpreter, Ports};
