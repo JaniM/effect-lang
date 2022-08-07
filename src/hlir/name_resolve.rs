@@ -156,6 +156,27 @@ impl HlirVisitor for NameResolver {
                 }
                 VisitAction::Recurse
             }
+            NodeKind::Handle {
+                group_id,
+                name,
+                handlers,
+                ..
+            } => {
+                let module = self.index.modules.get(&self.module).unwrap();
+                let group = match module.names.get(&name) {
+                    Some(Item::EffectGroup(group)) => group,
+                    Some(Item::Fn(_)) => todo!(),
+                    None => todo!(),
+                };
+                let group = self.index.effect_groups.get(group).unwrap();
+                *group_id = group.id;
+
+                for (handler, effect) in std::iter::zip(handlers, &group.effects) {
+                    handler.effect_id = effect.header.id;
+                }
+
+                VisitAction::Recurse
+            }
             _ => VisitAction::Recurse,
         };
 

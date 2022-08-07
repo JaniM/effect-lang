@@ -175,12 +175,12 @@ impl HlirVisitorImmut for PrettyPrint<'_> {
     fn visit_node(&mut self, node: &super::Node) -> VisitAction {
         match &node.kind {
             NodeKind::Handle {
+                group_id,
                 name,
                 handlers,
                 expr,
             } => {
-                self.text("handle ");
-                self.text(resolve_symbol(*name));
+                self.text(format!("handle {} #{}", resolve_symbol(*name), group_id.0));
                 self.indent();
                 self.hard_break();
 

@@ -48,6 +48,7 @@ pub enum Literal {
 /// A definition of an effect handler.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Handler {
+    pub effect_id: FunctionId,
     /// Name of the handled effect.
     pub name: Spur,
     /// Names of the arguments passed to this effect handler.
@@ -91,6 +92,7 @@ pub enum NodeKind {
         body: Box<Node>,
     },
     Handle {
+        group_id: EffectGroupId,
         name: Spur,
         handlers: Vec<Handler>,
         expr: Box<Node>,
@@ -496,6 +498,7 @@ impl HlirBuilder {
             .into_iter()
             .map(|x| {
                 Ok(Handler {
+                    effect_id: FunctionId(0),
                     name: x.name,
                     arguments: x.args.into_iter().map(|x| x.name).collect(),
                     body: self.read_block(module, x.body)?,
@@ -504,6 +507,7 @@ impl HlirBuilder {
             })
             .collect::<Result<_, _>>()?;
         Ok(NodeKind::Handle {
+            group_id: EffectGroupId(0),
             name: hdl.name,
             handlers,
             expr: self.read_block(module, hdl.expr)?.into(),

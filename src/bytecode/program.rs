@@ -5,7 +5,6 @@ use lasso::Spur;
 use crate::{
     hlir::{FnDef, FunctionId, Hlir, Module},
     intern::resolve_symbol,
-    typecheck::TypeStore,
 };
 
 use super::{
@@ -31,7 +30,7 @@ struct ProgramBuilder {
 
 impl Program {
     pub fn from_hlir(hlir: &Hlir) -> Self {
-        let mut builder = ProgramBuilder::new(&hlir.types);
+        let mut builder = ProgramBuilder::new(&hlir);
         builder.load_hlir(hlir);
         let ProgramBuilder {
             insts,
@@ -77,10 +76,10 @@ impl Program {
 }
 
 impl ProgramBuilder {
-    fn new(types: &TypeStore) -> Self {
+    fn new(hlir: &Hlir) -> Self {
         Self {
             insts: Default::default(),
-            ctx: FunctionBuilderCtx::new(types),
+            ctx: FunctionBuilderCtx::new(hlir),
             functions: Default::default(),
             function_names: Default::default(),
             entrypoint: Default::default(),
@@ -127,6 +126,9 @@ impl ProgramBuilder {
                 Instruction::Branch(idx1, idx2, _) => {
                     *idx1 = block_indices[*idx1 as usize];
                     *idx2 = block_indices[*idx2 as usize];
+                }
+                Instruction::InstallHandler(_, idx) => {
+                    *idx = block_indices[*idx as usize];
                 }
                 _ => {}
             }

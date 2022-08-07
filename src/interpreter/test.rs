@@ -95,3 +95,36 @@ fn recurse() {
 
     assert_eq!(interpreter.stdout.unwrap().get_ref(), b"5\n");
 }
+
+#[test]
+fn simple_function_effects() {
+    let source = unindent(
+        r#"
+        effect foo {
+            fn get_number() -> int;
+        }
+        fn main() {
+            handle foo {
+                get_number() {
+                    resume(1);
+                }
+            }
+            wow();
+            print_int(get_number());
+        }
+        fn wow() {
+            handle foo {
+                get_number() {
+                    resume(2);
+                }
+            }
+            print_int(get_number());
+        }"#,
+    );
+
+    let mut interpreter = test_interpreter(&source);
+    interpreter.program.print();
+    interpreter.run().unwrap();
+
+    assert_eq!(interpreter.stdout.unwrap().get_ref(), b"2\n1\n");
+}

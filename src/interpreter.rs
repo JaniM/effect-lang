@@ -3,7 +3,7 @@ pub mod standard;
 mod test;
 
 use core::panic;
-use std::{cmp::Ordering, io::Write, rc::Rc};
+use std::{cmp::Ordering, collections::HashMap, io::Write, rc::Rc};
 
 use chumsky::prelude::Simple;
 
@@ -35,6 +35,11 @@ struct Frame {
     return_addr: usize,
 }
 
+enum Handler {
+    Fn { idx: usize },
+    Effect { idx: usize },
+}
+
 pub struct Interpreter<P: Ports> {
     program: Program,
     ip: usize,
@@ -45,6 +50,7 @@ pub struct Interpreter<P: Ports> {
     compare: Ordering,
     frame: Frame,
     frames: Vec<Frame>,
+    handlers: HashMap<u32, Vec<Handler>>,
 }
 
 #[derive(Debug, From)]
@@ -70,6 +76,7 @@ impl<P: Ports> Interpreter<P> {
             compare: Ordering::Equal,
             frame: Default::default(),
             frames: Default::default(),
+            handlers: Default::default(),
         }
     }
 
@@ -190,6 +197,20 @@ impl<P: Ports> Interpreter<P> {
                     self.frame.return_addr = self.ip;
                     self.ip = idx as usize;
                 }
+                Value::Effect(id) => {
+                    let handler = self.handlers.get(id).unwrap();
+                    match handler.last() {
+                        Some(Handler::Fn { idx }) => {
+                            let old_frame = std::mem::take(&mut self.frame);
+                            self.frames.push(old_frame);
+
+                            self.frame.return_addr = self.ip;
+                            self.ip = *idx;
+                        }
+                        Some(Handler::Effect { .. }) => todo!(),
+                        None => todo!(),
+                    }
+                }
                 x => panic!("Can't call {:?}", x),
             },
             Instruction::Return => match self.frames.pop() {
@@ -205,6 +226,14 @@ impl<P: Ports> Interpreter<P> {
             Instruction::Pop(Register(reg)) => {
                 let value = self.stack.pop().expect("Pop on empty stack");
                 self.frame.registers[reg as usize] = value;
+            }
+            Instruction::InstallHandler(id, idx) => {
+                let stack = self.handlers.entry(id).or_default();
+                stack.push(Handler::Fn { idx: idx as usize });
+            }
+            Instruction::UninstallHandler(id) => {
+                let stack = self.handlers.get_mut(&id).unwrap();
+                stack.pop();
             }
         }
 

@@ -15,8 +15,9 @@ use lasso::Spur;
 use crate::{
     hlir::{
         self,
+        index::{Header, Index},
         visitor::{HlirVisitorImmut, VisitAction},
-        FnDef, Node, NodeKind,
+        FnDef, Hlir, Node, NodeKind,
     },
     intern::resolve_symbol,
     parser::BinopKind,
@@ -27,6 +28,7 @@ use crate::{
 pub enum Value {
     Builtin(u32),
     Function(u32),
+    Effect(u32),
     String(Rc<String>),
     Int(i64),
     Bool(bool),
@@ -79,6 +81,9 @@ pub enum Instruction<T = DefaultReg> {
     Return,
     Push(Register<T>),
     Pop(Register<T>),
+    /// Install a handler for an effect function at bytecode index.
+    InstallHandler(u32, u32),
+    UninstallHandler(u32),
 }
 
 /// Represents a linear sequence of operations. Can only have exactly one jump, at the end of the
@@ -109,13 +114,15 @@ pub struct FunctionBuilder<'a, T> {
 pub struct FunctionBuilderCtx {
     constants: Vec<Value>,
     types: TypeStore,
+    index: Index,
 }
 
 impl FunctionBuilderCtx {
-    pub fn new(types: &TypeStore) -> Self {
+    pub fn new(hlir: &Hlir) -> Self {
         Self {
             constants: Default::default(),
-            types: types.clone(),
+            types: hlir.types.clone(),
+            index: hlir.construct_index(),
         }
     }
 }
@@ -139,6 +146,8 @@ impl<T> Instruction<T> {
             Return => Return,
             Push(r) => Push(f(r)),
             Pop(r) => Pop(f(r)),
+            InstallHandler(a, b) => InstallHandler(a, b),
+            UninstallHandler(a) => UninstallHandler(a),
         }
     }
 }
@@ -209,6 +218,7 @@ impl<'a> FunctionBuilder<'a, usize> {
                         .extend_from_slice(&block_inputs[*idx2 as usize]);
                 }
                 Some(Instruction::Return) => {}
+                None => {}
                 x => panic!("Last instruction of block isn't a branch: {:?}", x),
             }
         }
@@ -366,9 +376,6 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
 
                 VisitAction::Nothing
             }
-            NodeKind::Resume { arg } => {
-                todo!();
-            }
             NodeKind::If {
                 cond,
                 if_true,
@@ -456,7 +463,11 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
                 VisitAction::Nothing
             }
             NodeKind::Function(id) => {
-                let val = Value::Function(id.0 as u32);
+                let header = self.ctx.index.functions.get(id).unwrap();
+                let val = match header {
+                    Header::Fn(_) => Value::Function(id.0 as u32),
+                    Header::Effect(_) => Value::Effect(id.0 as u32),
+                };
 
                 let constant = self.create_constant(val);
                 let reg = self.out_reg();
@@ -478,7 +489,57 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
 
                 VisitAction::Nothing
             }
-            NodeKind::Handle { .. } => todo!(),
+            NodeKind::Resume { arg } => {
+                let reg = self.next_reg();
+                self.walk_with_out(reg, arg);
+                self.inst(Instruction::Push(reg));
+
+                self.inst(Instruction::Return);
+
+                let block = self.new_block();
+                self.switch_block(block);
+
+                VisitAction::Nothing
+            }
+            NodeKind::Handle { handlers, expr, .. } => {
+                let block = self.current_block as u32;
+                let mut blocks = vec![];
+                for handler in handlers {
+                    let block = self.new_block();
+                    self.switch_block(block);
+
+                    for arg in handler.arguments.iter().rev() {
+                        let reg = self.next_reg();
+                        self.inst(Instruction::Pop(reg));
+
+                        let idx = self.locals.len();
+                        self.inst(Instruction::StoreLocal(idx as _, reg));
+
+                        self.locals.push(*arg);
+                    }
+
+                    self.walk_node(&handler.body);
+
+                    for _ in handler.arguments.iter().rev() {
+                        self.locals.pop();
+                    }
+
+                    blocks.push((handler.effect_id, block));
+                }
+
+                self.switch_block(block);
+                for (id, block) in &blocks {
+                    self.inst(Instruction::InstallHandler(id.0 as u32, *block));
+                }
+
+                self.walk_node(expr);
+
+                for (id, _) in &blocks {
+                    self.inst(Instruction::UninstallHandler(id.0 as u32));
+                }
+
+                VisitAction::Nothing
+            }
         }
     }
 }
@@ -494,6 +555,7 @@ fn print_inst(inst: &Instruction<usize>, consts: &Vec<Value>) {
                 match &consts[*idx as usize] {
                     Value::Builtin(_) => todo!(),
                     Value::Function(id) => format!("fn {}", id),
+                    Value::Effect(id) => format!("eff fn {}", id),
                     Value::String(v) => format!(r#""{v}""#),
                     Value::Int(v) => v.to_string(),
                     Value::Bool(v) => v.to_string(),
@@ -516,6 +578,8 @@ fn print_inst(inst: &Instruction<usize>, consts: &Vec<Value>) {
         Instruction::Return => println!("{:>spad$}ret", ""),
         Instruction::Push(reg) => println!("{:>spad$}push {reg}", ""),
         Instruction::Pop(reg) => println!("{reg:>pad$} = pop"),
+        Instruction::InstallHandler(func, idx) => println!("{:>spad$}install {func}, {idx}", ""),
+        Instruction::UninstallHandler(func) => println!("{:>spad$}uninstall {func}", ""),
     }
 }
 
@@ -576,7 +640,7 @@ mod test {
         let module = builder.hlir.modules.get(&ModuleId(0)).unwrap();
         let fndef = module.functions.get(&hlir::FunctionId(0)).unwrap();
 
-        let mut ctx = FunctionBuilderCtx::new(&builder.hlir.types);
+        let mut ctx = FunctionBuilderCtx::new(&builder.hlir);
 
         let mut func = Function::default();
         FunctionBuilder::new(&mut func, &mut ctx).build_fndef(fndef);
@@ -631,6 +695,7 @@ mod test {
             FunctionBuilderCtx {
                 constants: vec![Value::Int(0), Value::String("hello".to_owned().into())],
                 types: builder.hlir.types.clone(),
+                index: builder.hlir.construct_index()
             }
         );
     }

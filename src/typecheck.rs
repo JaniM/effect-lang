@@ -4,7 +4,7 @@ use lasso::Spur;
 
 use crate::{
     hlir::{
-        index::{Index, Item},
+        index::Index,
         visitor::{HlirVisitorImmut, VisitAction},
         FnDef, Hlir, Literal, Module, ModuleId, Node, NodeKind,
     },
@@ -230,22 +230,18 @@ impl HlirVisitorImmut for TypecheckContext {
         use Constraint::*;
         match &node.kind {
             NodeKind::Handle {
+                group_id,
                 expr,
                 handlers,
-                name,
+                ..
             } => {
-                let module = self.index.modules.get(&self.module).unwrap();
-                let group = match module.names.get(name).unwrap() {
-                    Item::EffectGroup(id) => id,
-                    Item::Fn(_) => panic!("Expected an effect group name"),
-                };
                 // Clone to satisfy borrow checker.
-                let group = self.index.effect_groups.get(group).unwrap().clone();
+                let group = self.index.effect_groups.get(group_id).unwrap().clone();
                 for handler in handlers {
                     let effect = group
                         .effects
                         .iter()
-                        .find(|e| e.header.name == handler.name)
+                        .find(|e| e.header.id == handler.effect_id)
                         .unwrap();
                     let effect_type = self.types.get(effect.header.ty);
                     self.types.replace(handler.ty, effect_type);

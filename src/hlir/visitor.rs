@@ -44,6 +44,7 @@ pub trait HlirVisitor: Sized {
         match action {
             VisitAction::Recurse => match &mut node.kind {
                 NodeKind::Handle {
+                    group_id,
                     name,
                     handlers,
                     expr,
@@ -163,6 +164,7 @@ pub trait HlirVisitorImmut: Sized {
         match action {
             VisitAction::Recurse => match &node.kind {
                 NodeKind::Handle {
+                    group_id,
                     name,
                     handlers,
                     expr,

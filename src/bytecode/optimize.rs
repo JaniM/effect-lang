@@ -375,6 +375,8 @@ pub fn describe_inst<T: Default + Copy>(inst: &Instruction<T>) -> InstDesc<T> {
         Instruction::Pop(reg) => {
             writes.push(*reg);
         }
+        Instruction::InstallHandler(_, _) => {}
+        Instruction::UninstallHandler(_) => {}
     }
 
     InstDesc { reads, writes }

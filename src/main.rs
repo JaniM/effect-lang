@@ -104,7 +104,7 @@ fn main() {
     report_unknown_types(&mut hlir);
 
     let module = hlir.modules.get(&hlir::ModuleId(0)).unwrap();
-    let mut ctx = FunctionBuilderCtx::new(&hlir.types);
+    let mut ctx = FunctionBuilderCtx::new(&hlir);
     for fndef in module.functions.values() {
         let mut func = Function::default();
         FunctionBuilder::new(&mut func, &mut ctx).build_fndef(fndef);
