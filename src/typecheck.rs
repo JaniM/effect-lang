@@ -161,6 +161,7 @@ impl TypecheckContext {
 
     pub fn apply_constraints(&mut self) {
         while !self.constraints.is_empty() {
+            let mut extend = Vec::new();
             let mut applied = HashSet::new();
             for &constraint in &self.constraints {
                 match constraint {
@@ -177,7 +178,9 @@ impl TypecheckContext {
                             (Type::Unknown, Type::Unknown) => continue,
                             (Type::Function { inputs, .. }, arg_ty) => {
                                 let in_ty = self.types.get(inputs[index]);
-                                if in_ty != arg_ty {
+                                if matches!(in_ty, Type::Unknown) {
+                                    extend.push(Constraint::Equal(inputs[index], arg));
+                                } else if in_ty != arg_ty {
                                     panic!("ArgumentOf mismatch {func:?} {in_ty:?}, {arg:?} {arg_ty:?}");
                                 }
                             }
@@ -200,6 +203,7 @@ impl TypecheckContext {
                 applied.insert(constraint);
             }
             self.constraints.retain(|x| !applied.contains(x));
+            self.constraints.extend_from_slice(&extend);
             if applied.is_empty() {
                 break;
             }

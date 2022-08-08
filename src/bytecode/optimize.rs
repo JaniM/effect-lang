@@ -226,7 +226,7 @@ pub fn describe_inst<T: Default + Copy>(inst: &Instruction<T>) -> InstDesc<T> {
         Instruction::Call(reg) => {
             reads.push(*reg);
         }
-        Instruction::Return => {}
+        Instruction::Return | Instruction::Resume => {}
         Instruction::Push(reg) => {
             reads.push(*reg);
         }

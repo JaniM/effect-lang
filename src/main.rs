@@ -58,24 +58,28 @@ fn main() {
         effect foo {
           fn get_number() -> int;
         }
+
         fn main() {
-          let count = 0;
-          handle foo {
-            get_number() {
-              count = count + 1;
-              resume(count);
-            }
-          }
-          wow();
+          give_numbers(wow, 5);
+          print("done!");
         }
+
+        fn give_numbers(func, max) {
+          let count = 0;
+          handle foo get_number() {
+            count = count + 1;
+            if (count < (max + 1)) { resume(count); }
+            return;
+          }
+          func();
+        }
+
         fn wow() {
           while (true) {
             let num = get_number();
-            if (num > 5) { return; }
             print_int(num);
           }
-        }
-        "#,
+        }"#,
     );
 
     println!("Source:\n{}\n", source);
@@ -94,13 +98,13 @@ fn main() {
     typecheck.walk_hlir(&mut hlir);
     typecheck.apply_constraints();
 
-    {
-        let mut pretty = PrettyPrint::new();
-        pretty.walk_hlir(&mut hlir);
-        println!("HIR:");
-        print_fragments(&pretty.fragments);
-        println!();
-    }
+    // {
+    //     let mut pretty = PrettyPrint::new();
+    //     pretty.walk_hlir(&mut hlir);
+    //     println!("HIR:");
+    //     print_fragments(&pretty.fragments);
+    //     println!();
+    // }
 
     report_unknown_types(&mut hlir);
 
@@ -114,11 +118,11 @@ fn main() {
     }
 
     let program = Program::from_hlir(&hlir);
-    println!("\nBytecode: ");
-    program.print();
+    // println!("\nBytecode: ");
+    // program.print();
 
     let mut interpreter = Interpreter::<StandardPorts>::new(program).with_stdout(std::io::stdout());
     load_standard_builtins(&mut interpreter);
-    println!("\nOutput:");
+    println!("Output:");
     interpreter.run().unwrap();
 }

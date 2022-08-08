@@ -247,8 +247,10 @@ fn handle_def(
         });
 
     let group = effect
+        .clone()
         .repeated()
-        .delimited_by(just(Token::OpenCurly), just(Token::CloseCurly));
+        .delimited_by(just(Token::OpenCurly), just(Token::CloseCurly))
+        .or(effect.map(|x| vec![x]));
 
     let expr = block_undelimited(block_expression, expression);
 

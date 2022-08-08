@@ -136,20 +136,25 @@ fn environment_function_effects() {
         effect foo {
           fn get_number() -> int;
         }
+
         fn main() {
-          let count = 0;
-          handle foo {
-            get_number() {
-              count = count + 1;
-              resume(count);
-            }
-          }
-          wow();
+          give_numbers(wow, 5);
+          print("done!");
         }
+
+        fn give_numbers(func, max) {
+          let count = 0;
+          handle foo get_number() {
+            count = count + 1;
+            if (count < (max + 1)) { resume(count); }
+            return;
+          }
+          func();
+        }
+
         fn wow() {
           while (true) {
             let num = get_number();
-            if (num > 5) { return; }
             print_int(num);
           }
         }"#,
@@ -159,5 +164,8 @@ fn environment_function_effects() {
     interpreter.program.print();
     interpreter.run().unwrap();
 
-    assert_eq!(interpreter.stdout.unwrap().get_ref(), b"1\n2\n3\n4\n5\n");
+    assert_eq!(
+        interpreter.stdout.unwrap().get_ref(),
+        b"1\n2\n3\n4\n5\ndone!\n"
+    );
 }

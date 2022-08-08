@@ -126,6 +126,7 @@ impl<P: Ports> Interpreter<P> {
 
     fn step(&mut self) -> ExecuteResult {
         let inst = &self.program.insts[self.ip];
+        // println!("#{:<3} {inst:?}", self.ip);
         self.ip += 1;
 
         match *inst {
@@ -224,6 +225,23 @@ impl<P: Ports> Interpreter<P> {
                 x => panic!("Can't call {:?}", x),
             },
             Instruction::Return => {
+                if let Some(idx) = self.frame.replace_frame {
+                    self.frame.replace_frame = None;
+                    let frame = std::mem::take(&mut self.frame);
+                    let old = &mut self.frames[idx];
+                    old.locals = frame.locals;
+                    self.frames.drain(idx + 1..);
+                    self.frame = self.frames.pop().unwrap();
+                }
+                match self.frames.pop() {
+                    Some(frame) => {
+                        self.ip = self.frame.return_addr;
+                        self.frame = frame;
+                    }
+                    None => self.executing = false,
+                }
+            }
+            Instruction::Resume => {
                 let return_addr = self.frame.return_addr;
                 if let Some(idx) = self.frame.replace_frame {
                     self.frame.replace_frame = None;

@@ -80,6 +80,7 @@ pub enum Instruction<T = DefaultReg> {
     /// Calls the function loaded in register.
     Call(Register<T>),
     Return,
+    Resume,
     Push(Register<T>),
     Pop(Register<T>),
     /// Install a handler for an effect function at bytecode index.
@@ -146,6 +147,7 @@ impl<T> Instruction<T> {
             Branch(a, b, r) => Branch(a, b, f(r)),
             Call(r) => Call(f(r)),
             Return => Return,
+            Resume => Resume,
             Push(r) => Push(f(r)),
             Pop(r) => Pop(f(r)),
             InstallHandler(a, b) => InstallHandler(a, b),
@@ -220,6 +222,7 @@ impl<'a> FunctionBuilder<'a, usize> {
                         .extend_from_slice(&block_inputs[*idx2 as usize]);
                 }
                 Some(Instruction::Return) => {}
+                Some(Instruction::Resume) => {}
                 None => {}
                 x => panic!("Last instruction of block isn't a branch: {:?}", x),
             }
@@ -500,7 +503,7 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
                 self.walk_with_out(reg, arg);
                 self.inst(Instruction::Push(reg));
 
-                self.inst(Instruction::Return);
+                self.inst(Instruction::Resume);
 
                 let block = self.new_block();
                 self.switch_block(block);
@@ -583,6 +586,7 @@ fn print_inst(inst: &Instruction<usize>, consts: &Vec<Value>) {
         }
         Instruction::Call(reg) => println!("{:>spad$}call {reg}", ""),
         Instruction::Return => println!("{:>spad$}ret", ""),
+        Instruction::Resume => println!("{:>spad$}resume", ""),
         Instruction::Push(reg) => println!("{:>spad$}push {reg}", ""),
         Instruction::Pop(reg) => println!("{reg:>pad$} = pop"),
         Instruction::InstallHandler(func, idx) => println!("{:>spad$}install {func}, {idx}", ""),
