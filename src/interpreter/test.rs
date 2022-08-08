@@ -37,12 +37,12 @@ fn unit_fn_call() {
     let source = unindent(
         r#"
         fn main() {
-            func("a", "b");
-            func("c", "d");
+          func("a", "b");
+          func("c", "d");
         }
         fn func(a: string, b: string) {
-            print(a);
-            print(b);
+          print(a);
+          print(b);
         }"#,
     );
 
@@ -58,11 +58,11 @@ fn while_loop() {
     let source = unindent(
         r#"
         fn main() {
-            let x = 0;
-            while (x < 5) {
-                x = x + 1;
-                print_int(x);
-            }
+          let x = 0;
+          while (x < 5) {
+            x = x + 1;
+            print_int(x);
+          }
         }"#,
     );
 
@@ -78,14 +78,14 @@ fn recurse() {
     let source = unindent(
         r#"
         fn main() {
-            let x = foo(0);
-            print_int(x);
+          let x = foo(0);
+          print_int(x);
         }
         fn foo(c: int) -> int {
-            if (c < 5) {
-                return foo(c+1);
-            }
-            return c;
+          if (c < 5) {
+            return foo(c+1);
+          }
+          return c;
         }"#,
     );
 
@@ -101,24 +101,24 @@ fn simple_function_effects() {
     let source = unindent(
         r#"
         effect foo {
-            fn get_number() -> int;
+          fn get_number() -> int;
         }
         fn main() {
-            handle foo {
-                get_number() {
-                    resume(1);
-                }
+          handle foo {
+            get_number() {
+              resume(1);
             }
-            wow();
-            print_int(get_number());
+          }
+          wow();
+          print_int(get_number());
         }
         fn wow() {
-            handle foo {
-                get_number() {
-                    resume(2);
-                }
+          handle foo {
+            get_number() {
+              resume(2);
             }
-            print_int(get_number());
+          }
+          print_int(get_number());
         }"#,
     );
 
@@ -127,4 +127,37 @@ fn simple_function_effects() {
     interpreter.run().unwrap();
 
     assert_eq!(interpreter.stdout.unwrap().get_ref(), b"2\n1\n");
+}
+
+#[test]
+fn environment_function_effects() {
+    let source = unindent(
+        r#"
+        effect foo {
+          fn get_number() -> int;
+        }
+        fn main() {
+          let count = 0;
+          handle foo {
+            get_number() {
+              count = count + 1;
+              resume(count);
+            }
+          }
+          wow();
+        }
+        fn wow() {
+          while (true) {
+            let num = get_number();
+            if (num > 5) { return; }
+            print_int(num);
+          }
+        }"#,
+    );
+
+    let mut interpreter = test_interpreter(&source);
+    interpreter.program.print();
+    interpreter.run().unwrap();
+
+    assert_eq!(interpreter.stdout.unwrap().get_ref(), b"1\n2\n3\n4\n5\n");
 }

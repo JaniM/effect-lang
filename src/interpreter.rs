@@ -28,15 +28,16 @@ pub trait Ports {
     type Stdout: Write + 'static;
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Frame {
     registers: [Value; 32],
     locals: TinyVec<[Value; 8]>,
     return_addr: usize,
+    replace_frame: Option<usize>,
 }
 
 enum Handler {
-    Fn { idx: usize },
+    Fn { idx: usize, frame_level: usize },
     Effect { idx: usize },
 }
 
@@ -175,6 +176,9 @@ impl<P: Ports> Interpreter<P> {
             Instruction::Less(Register(reg)) => {
                 self.frame.registers[reg as usize] = Value::Bool(self.compare == Ordering::Less);
             }
+            Instruction::Greater(Register(reg)) => {
+                self.frame.registers[reg as usize] = Value::Bool(self.compare == Ordering::Greater);
+            }
             Instruction::Jump(addr) => {
                 self.ip = addr as usize;
             }
@@ -200,10 +204,16 @@ impl<P: Ports> Interpreter<P> {
                 Value::Effect(id) => {
                     let handler = self.handlers.get(id).unwrap();
                     match handler.last() {
-                        Some(Handler::Fn { idx }) => {
-                            let old_frame = std::mem::take(&mut self.frame);
-                            self.frames.push(old_frame);
+                        Some(Handler::Fn { idx, frame_level }) => {
+                            let frame = if *frame_level == self.frames.len() {
+                                self.frame.clone()
+                            } else {
+                                self.frames.get(*frame_level).unwrap().clone()
+                            };
 
+                            let old_frame = std::mem::replace(&mut self.frame, frame);
+                            self.frames.push(old_frame);
+                            self.frame.replace_frame = Some(*frame_level);
                             self.frame.return_addr = self.ip;
                             self.ip = *idx;
                         }
@@ -213,13 +223,22 @@ impl<P: Ports> Interpreter<P> {
                 }
                 x => panic!("Can't call {:?}", x),
             },
-            Instruction::Return => match self.frames.pop() {
-                Some(frame) => {
-                    self.ip = self.frame.return_addr;
-                    self.frame = frame;
+            Instruction::Return => {
+                let return_addr = self.frame.return_addr;
+                if let Some(idx) = self.frame.replace_frame {
+                    self.frame.replace_frame = None;
+                    let frame = std::mem::take(&mut self.frame);
+                    let old = &mut self.frames[idx];
+                    old.locals = frame.locals;
                 }
-                None => self.executing = false,
-            },
+                match self.frames.pop() {
+                    Some(frame) => {
+                        self.ip = return_addr;
+                        self.frame = frame;
+                    }
+                    None => self.executing = false,
+                }
+            }
             Instruction::Push(Register(reg)) => {
                 self.stack.push(self.frame.registers[reg as usize].clone());
             }
@@ -229,7 +248,10 @@ impl<P: Ports> Interpreter<P> {
             }
             Instruction::InstallHandler(id, idx) => {
                 let stack = self.handlers.entry(id).or_default();
-                stack.push(Handler::Fn { idx: idx as usize });
+                stack.push(Handler::Fn {
+                    idx: idx as usize,
+                    frame_level: self.frames.len(),
+                });
             }
             Instruction::UninstallHandler(id) => {
                 let stack = self.handlers.get_mut(&id).unwrap();

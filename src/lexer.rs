@@ -33,6 +33,8 @@ enum RawToken {
     Equals,
     #[token("<")]
     LessThan,
+    #[token(">")]
+    GreaterThan,
     #[token("->")]
     RightArrow,
     #[token("+")]
@@ -75,6 +77,7 @@ pub enum Token {
     Let,
     Equals,
     LessThan,
+    GreaterThan,
     RightArrow,
     Assign,
     Plus,
@@ -143,6 +146,7 @@ impl Lexer<'_> {
             RawToken::Assign => Token::Assign,
             RawToken::Equals => Token::Equals,
             RawToken::LessThan => Token::LessThan,
+            RawToken::GreaterThan => Token::GreaterThan,
             RawToken::RightArrow => Token::RightArrow,
             RawToken::Plus => Token::Plus,
         };

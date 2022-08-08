@@ -83,10 +83,6 @@ fn let_fold() {
     let mut builder = HlirBuilder::default();
     builder.read_module(FileId(0), ast).unwrap();
 
-    let builtins = Builtins::load(&builder.hlir.types, |l| {
-        load_standard_builtins::<StandardPorts>(l)
-    });
-
     Simplifier.walk_hlir(&mut builder.hlir);
     NameResolver::new().walk_hlir(&mut builder.hlir);
 

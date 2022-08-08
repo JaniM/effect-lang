@@ -56,23 +56,24 @@ fn main() {
     let source = unindent(
         r#"
         effect foo {
-            fn get_number() -> int;
-            ctl yeet(error: string);
+          fn get_number() -> int;
         }
         fn main() {
-            handle foo {
-                get_number() {
-                    resume(0);
-                }
-                yeet(error) {
-                    print(error);
-                    return;
-                }
+          let count = 0;
+          handle foo {
+            get_number() {
+              count = count + 1;
+              resume(count);
             }
-            print_int(wow());
+          }
+          wow();
         }
-        fn wow() -> int {
-            return get_number();
+        fn wow() {
+          while (true) {
+            let num = get_number();
+            if (num > 5) { return; }
+            print_int(num);
+          }
         }
         "#,
     );
@@ -108,7 +109,7 @@ fn main() {
     for fndef in module.functions.values() {
         let mut func = Function::default();
         FunctionBuilder::new(&mut func, &mut ctx).build_fndef(fndef);
-        bytecode::print_function(&func, &ctx);
+        // bytecode::print_function(&func, &ctx);
         simplify_function(&mut func);
     }
 

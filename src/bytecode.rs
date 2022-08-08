@@ -72,6 +72,7 @@ pub enum Instruction<T = DefaultReg> {
     /// Set the accumulator to true if the comparison flag is Equal.
     Equals(Register<T>),
     Less(Register<T>),
+    Greater(Register<T>),
     /// Unconditional jump to index.
     Jump(u32),
     /// Jump left if the register is true and otherwise jump right.
@@ -140,6 +141,7 @@ impl<T> Instruction<T> {
             IntCmp(a, b) => IntCmp(f(a), f(b)),
             Equals(r) => Equals(f(r)),
             Less(r) => Less(f(r)),
+            Greater(r) => Greater(f(r)),
             Jump(i) => Jump(i),
             Branch(a, b, r) => Branch(a, b, f(r)),
             Call(r) => Call(f(r)),
@@ -345,6 +347,10 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
                     BinopKind::Less => {
                         self.inst(Instruction::IntCmp(left_reg, right_reg));
                         self.inst(Instruction::Less(out));
+                    }
+                    BinopKind::Greater => {
+                        self.inst(Instruction::IntCmp(left_reg, right_reg));
+                        self.inst(Instruction::Greater(out));
                     }
                     BinopKind::Add => {
                         self.inst(Instruction::Add(left_reg, right_reg, out));
@@ -568,6 +574,7 @@ fn print_inst(inst: &Instruction<usize>, consts: &Vec<Value>) {
         Instruction::LoadBuiltin(idx, reg) => println!("{reg:>pad$} = builtin {idx}"),
         Instruction::Equals(reg) => println!("{reg:>pad$} = equals"),
         Instruction::Less(reg) => println!("{reg:>pad$} = less"),
+        Instruction::Greater(reg) => println!("{reg:>pad$} = greater"),
         Instruction::Add(a, b, reg) => println!("{reg:>pad$} = add {a}, {b}"),
         Instruction::IntCmp(a, b) => println!("{:>spad$}cmp {a}, {b}", ""),
         Instruction::Jump(addr) => println!("{:>spad$}jump #{addr}", ""),
@@ -663,6 +670,8 @@ mod test {
                     Block {
                         insts: vec![
                             LoadConstant(0, Register(1)),
+                            StoreLocal(0, Register(1)),
+                            LoadLocal(0, Register(1)),
                             LoadConstant(0, Register(2)),
                             IntCmp(Register(1), Register(2)),
                             Equals(Register(1)),

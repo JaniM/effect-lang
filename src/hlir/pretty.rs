@@ -258,6 +258,9 @@ impl HlirVisitorImmut for PrettyPrint<'_> {
                     BinopKind::Less => {
                         self.text(" < ");
                     }
+                    BinopKind::Greater => {
+                        self.text(" > ");
+                    }
                     BinopKind::Add => {
                         self.text(" + ");
                     }

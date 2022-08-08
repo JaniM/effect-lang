@@ -1,4 +1,8 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use lasso::Spur;
 
@@ -100,7 +104,7 @@ impl TypeStore {
         id
     }
 
-    /// Insertd a new type to the store.
+    /// Inserts a new type to the store.
     pub fn insert_nodedup(&self, ty: Type) -> TypeId {
         let mut store = self.0.borrow_mut();
 
@@ -128,7 +132,7 @@ impl TypeStore {
 }
 
 /// Represents a type constraint. Used by [`TypecheckContext::apply_constraints()`].
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Constraint {
     /// The two types must be equal.
     Equal(TypeId, TypeId),
@@ -155,19 +159,19 @@ impl TypecheckContext {
         Self::default()
     }
 
-    pub fn apply_constraints(&self) {
-        loop {
-            let mut applied = false;
-            for constraint in &self.constraints {
+    pub fn apply_constraints(&mut self) {
+        while !self.constraints.is_empty() {
+            let mut applied = HashSet::new();
+            for &constraint in &self.constraints {
                 match constraint {
-                    &Constraint::Equal(a, b) => match (self.types.get(a), self.types.get(b)) {
+                    Constraint::Equal(a, b) => match (self.types.get(a), self.types.get(b)) {
                         (Type::Unknown, Type::Unknown) => continue,
                         (Type::Unknown, ty) => self.types.replace(a, ty),
                         (ty, Type::Unknown) => self.types.replace(b, ty),
                         (a, b) if a == b => continue,
                         (a, b) => panic!("Type mismatch {a:?}, {b:?}"),
                     },
-                    &Constraint::ArgumentOf(func, arg, index) => {
+                    Constraint::ArgumentOf(func, arg, index) => {
                         match (self.types.get(func), self.types.get(arg)) {
                             (Type::Function { .. }, Type::Unknown) => continue,
                             (Type::Unknown, Type::Unknown) => continue,
@@ -176,12 +180,11 @@ impl TypecheckContext {
                                 if in_ty != arg_ty {
                                     panic!("ArgumentOf mismatch {func:?} {in_ty:?}, {arg:?} {arg_ty:?}");
                                 }
-                                continue;
                             }
                             (a, b) => panic!("ArgumentOf unify error {a:?}, {b:?}"),
                         }
                     }
-                    &Constraint::ResultOf(func, res) => {
+                    Constraint::ResultOf(func, res) => {
                         match (self.types.get(func), self.types.get(res)) {
                             (Type::Unknown, Type::Unknown) => continue,
                             (Type::Function { output, .. }, Type::Unknown) => {
@@ -194,9 +197,10 @@ impl TypecheckContext {
                         }
                     }
                 }
-                applied = true;
+                applied.insert(constraint);
             }
-            if !applied {
+            self.constraints.retain(|x| !applied.contains(x));
+            if applied.is_empty() {
                 break;
             }
         }
@@ -288,10 +292,7 @@ impl HlirVisitorImmut for TypecheckContext {
             NodeKind::Binop { op, left, right } => {
                 self.constraints.push(Equal(left.ty, right.ty));
                 match op {
-                    BinopKind::Equals => {
-                        self.constraints.push(Equal(node.ty, self.types.bool()));
-                    }
-                    BinopKind::Less => {
+                    BinopKind::Equals | BinopKind::Less | BinopKind::Greater => {
                         self.constraints.push(Equal(node.ty, self.types.bool()));
                     }
                     BinopKind::Add => {

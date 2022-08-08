@@ -80,6 +80,7 @@ pub struct While {
 pub enum BinopKind {
     Equals,
     Less,
+    Greater,
     Add,
 }
 
@@ -341,6 +342,7 @@ fn parser() -> impl MParser<Vec<Node>> {
         let binopkind = select! {
             Token::Equals => BinopKind::Equals,
             Token::LessThan => BinopKind::Less,
+            Token::GreaterThan => BinopKind::Greater,
             Token::Plus => BinopKind::Add,
         };
 

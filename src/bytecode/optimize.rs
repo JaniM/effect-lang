@@ -12,123 +12,8 @@ pub struct InstDesc<T: Default> {
 
 pub fn simplify_function(func: &mut Function<usize>) {
     for block in func.blocks.iter_mut() {
-        replace_load_with_copy(block);
-        remove_unnecessary_write(block);
-        remove_unnecessary_load(block);
         simplify_registers(block);
         compact_registers(block);
-    }
-}
-
-fn remove_unnecessary_write(block: &mut Block<usize>) {
-    enum Rewrite {
-        Remove(usize),
-    }
-    use Rewrite::*;
-
-    let mut rewrites = Vec::new();
-    for (idx, inst) in block.insts.iter().enumerate().rev() {
-        let local = match inst {
-            Instruction::StoreLocal(idx, _) => *idx,
-            _ => continue,
-        };
-
-        if block.outputs.contains(&local) {
-            continue;
-        }
-
-        let start = idx + 1;
-        let scope =
-            resolve_local_write_scope(local, &block.insts, start).unwrap_or(block.insts.len() - 1);
-
-        let mut read = false;
-        for inst in block.insts[start..=scope].iter() {
-            match inst {
-                Instruction::LoadLocal(loc, _) if *loc == local => {
-                    read = true;
-                    break;
-                }
-                Instruction::StoreLocal(loc, _) if *loc == local => unreachable!(),
-                _ => continue,
-            }
-        }
-
-        if !read {
-            rewrites.push(Remove(idx));
-        }
-    }
-
-    for rewrite in rewrites {
-        match rewrite {
-            Remove(idx) => {
-                block.insts.remove(idx);
-            }
-        }
-    }
-}
-
-fn replace_load_with_copy(block: &mut Block<usize>) {
-    enum Rewrite {
-        Substitute(usize, Instruction<usize>),
-    }
-    use Rewrite::*;
-
-    let mut rewrites = Vec::new();
-    for (idx, inst) in block.insts.iter().enumerate() {
-        let (local, var) = match inst {
-            Instruction::StoreLocal(idx, var) => (*idx, *var),
-            _ => continue,
-        };
-
-        let start = idx + 1;
-        let scope = resolve_write_scope(&var, &block.insts, start).unwrap_or(block.insts.len() - 1);
-
-        for (idx, inst) in block.insts[start..=scope].iter().enumerate() {
-            match inst {
-                Instruction::LoadLocal(loc, reg) if *loc == local => {
-                    rewrites.push(Substitute(idx + start, Instruction::Copy(var, *reg)));
-                }
-                Instruction::StoreLocal(loc, _) if *loc == local => unreachable!(),
-                _ => continue,
-            }
-        }
-    }
-
-    for rewrite in rewrites {
-        match rewrite {
-            Substitute(idx, inst) => {
-                block.insts[idx] = inst;
-            }
-        }
-    }
-}
-
-fn remove_unnecessary_load(block: &mut Block<usize>) {
-    enum Rewrite {
-        Remove(usize),
-    }
-    use Rewrite::*;
-
-    let mut rewrites = Vec::new();
-    for (idx, inst) in block.insts.iter().enumerate() {
-        let var = match inst {
-            Instruction::LoadLocal(_, var) => *var,
-            _ => continue,
-        };
-
-        let start = idx + 1;
-        let scope = resolve_scope(&var, &block.insts, start);
-        if scope.is_none() {
-            rewrites.push(Remove(idx));
-        }
-    }
-
-    for rewrite in rewrites.into_iter().rev() {
-        match rewrite {
-            Remove(idx) => {
-                block.insts.remove(idx);
-            }
-        }
     }
 }
 
@@ -258,7 +143,8 @@ fn replace_regiater(inst: &mut Instruction<usize>, orig: Register<usize>, new: R
         | Pop(reg)
         | Call(reg)
         | Equals(reg)
-        | Less(reg) => {
+        | Less(reg)
+        | Greater(reg) => {
             *reg = new;
         }
         IntCmp(a, b) | Copy(a, b) => {
@@ -300,34 +186,6 @@ fn resolve_scope(var: &Register, insts: &[Instruction], start: usize) -> Option<
     last
 }
 
-/// Finds the index where this variable is replaced.
-/// Returns `None` if the variable is never written to.
-fn resolve_write_scope(var: &Register, insts: &[Instruction], start: usize) -> Option<usize> {
-    for (idx, inst) in insts.iter().enumerate().skip(start) {
-        let desc = describe_inst(inst);
-        if desc.writes.contains(var) {
-            return Some(idx - 1);
-        }
-    }
-    None
-}
-
-/// Finds the index where this local is replaced.
-/// Returns `None` if the local is never written to.
-fn resolve_local_write_scope<T>(
-    local: u32,
-    insts: &[Instruction<T>],
-    start: usize,
-) -> Option<usize> {
-    for (idx, inst) in insts.iter().enumerate().skip(start) {
-        match inst {
-            Instruction::StoreLocal(loc, _) if *loc == local => return Some(idx - 1),
-            _ => {}
-        }
-    }
-    None
-}
-
 pub fn describe_inst<T: Default + Copy>(inst: &Instruction<T>) -> InstDesc<T> {
     let mut reads = ArrayVec::default();
     let mut writes = ArrayVec::default();
@@ -358,7 +216,7 @@ pub fn describe_inst<T: Default + Copy>(inst: &Instruction<T>) -> InstDesc<T> {
             reads.push(*b);
             writes.push(*out);
         }
-        Instruction::Equals(reg) | Instruction::Less(reg) => {
+        Instruction::Equals(reg) | Instruction::Less(reg) | Instruction::Greater(reg) => {
             writes.push(*reg);
         }
         Instruction::Jump(_) => {}
