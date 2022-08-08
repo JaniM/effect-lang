@@ -1,5 +1,7 @@
 use std::{marker::PhantomData, rc::Rc};
 
+use tinyvec::tiny_vec;
+
 use crate::{
     bytecode::Value,
     typecheck::TypeStore,
@@ -66,7 +68,7 @@ where
 
     fn extract_type(&self, types: &TypeStore) -> TypeId {
         types.insert(Type::Function {
-            inputs: vec![],
+            inputs: tiny_vec![],
             output: types.unit(),
         })
     }
@@ -89,7 +91,7 @@ where
 
     fn extract_type(&self, types: &TypeStore) -> TypeId {
         types.insert(Type::Function {
-            inputs: vec![A::extract_type(types)],
+            inputs: tiny_vec![[_; _] => A::extract_type(types)],
             output: types.unit(),
         })
     }

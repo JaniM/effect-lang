@@ -142,7 +142,7 @@ fn environment_function_effects() {
           print("done!");
         }
 
-        fn give_numbers(func, max) {
+        fn give_numbers(func: () -> unit, max) {
           let count = 0;
           handle foo get_number() {
             count = count + 1;

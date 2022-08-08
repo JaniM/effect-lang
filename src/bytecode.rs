@@ -274,7 +274,11 @@ impl<'a> FunctionBuilder<'a, usize> {
     }
 
     fn out_reg(&self) -> Register<usize> {
-        *self.out_registers.last().expect("No out registers set")
+        self.maybe_out_reg().expect("No out registers set")
+    }
+
+    fn maybe_out_reg(&self) -> Option<Register<usize>> {
+        self.out_registers.last().copied()
     }
 
     fn next_reg(&mut self) -> Register<usize> {
@@ -380,10 +384,10 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
                         output: box ConcreteType::Unit,
                         ..
                     } => {}
-                    ConcreteType::Function { .. } => {
-                        let out = self.out_reg();
-                        self.inst(Instruction::Pop(out));
-                    }
+                    ConcreteType::Function { .. } => match self.maybe_out_reg() {
+                        Some(out) => self.inst(Instruction::Pop(out)),
+                        None => {}
+                    },
                     _ => todo!(),
                 }
 

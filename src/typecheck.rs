@@ -1,6 +1,7 @@
 use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
 use lasso::Spur;
+use tinyvec::TinyVec;
 
 use crate::{
     hlir::{
@@ -24,7 +25,7 @@ pub enum Type {
     /// A currently unresolved type name.
     Name(Spur),
     Function {
-        inputs: Vec<TypeId>,
+        inputs: TinyVec<[TypeId; 4]>,
         output: TypeId,
     },
     String,
@@ -181,6 +182,8 @@ enum Constraint {
     /// function, result
     /// The return type of function is result.
     ResultOf(TypeId, TypeId),
+    /// The type can be called with N arguments..
+    Call(TypeId, usize),
 }
 
 #[derive(Default)]
@@ -191,6 +194,8 @@ pub struct TypecheckContext {
     constraints: Vec<Constraint>,
     names: Vec<(Spur, TypeId)>,
     resume_type: Option<TypeId>,
+    return_type: TypeId,
+    extend: RefCell<Vec<Constraint>>,
 }
 
 impl TypecheckContext {
@@ -198,54 +203,110 @@ impl TypecheckContext {
         Self::default()
     }
 
+    /// Apply all known constraints.
     pub fn apply_constraints(&mut self) {
         while !self.constraints.is_empty() {
-            let mut extend = Vec::new();
             let mut applied = HashSet::new();
             for &constraint in &self.constraints {
-                match constraint {
-                    Constraint::Equal(a, b) => match (self.types.get(a), self.types.get(b)) {
-                        (Type::Unknown(_), Type::Unknown(_)) => continue,
-                        (Type::Unknown(_), ty) => self.types.replace(a, ty),
-                        (ty, Type::Unknown(_)) => self.types.replace(b, ty),
-                        (a, b) if a == b => continue,
-                        (a, b) => panic!("Type mismatch {a:?}, {b:?}"),
-                    },
-                    Constraint::ArgumentOf(func, arg, index) => {
-                        match (self.types.get(func), self.types.get_concrete(arg)) {
-                            (Type::Function { .. }, ConcreteType::Unknown(_)) => continue,
-                            (Type::Unknown(_), ConcreteType::Unknown(_)) => continue,
-                            (Type::Function { inputs, .. }, arg_ty) => {
-                                let in_ty = self.types.get_concrete(inputs[index]);
-                                if matches!(in_ty, ConcreteType::Unknown(_)) {
-                                    extend.push(Constraint::Equal(inputs[index], arg));
-                                } else if in_ty != arg_ty {
-                                    panic!("ArgumentOf mismatch {func:?} {in_ty:?}, {arg:?} {arg_ty:?}");
-                                }
-                            }
-                            (a, b) => panic!("ArgumentOf unify error {a:?}, {b:?}"),
-                        }
-                    }
-                    Constraint::ResultOf(func, res) => {
-                        match (self.types.get(func), self.types.get(res)) {
-                            (Type::Unknown(_), Type::Unknown(_)) => continue,
-                            (Type::Function { output, .. }, Type::Unknown(_)) => {
-                                self.types.replace(res, self.types.get(output))
-                            }
-                            (Type::Function { output, .. }, x) if self.types.get(output) == x => {
-                                continue
-                            }
-                            (a, b) => panic!("ResultOf unify error {a:?}, {b:?}"),
-                        }
-                    }
+                if self.solve_constraint(constraint) {
+                    applied.insert(constraint);
                 }
-                applied.insert(constraint);
             }
+
             self.constraints.retain(|x| !applied.contains(x));
+
+            let mut extend = self.extend.borrow_mut();
             self.constraints.extend_from_slice(&extend);
+            extend.clear();
+
             if applied.is_empty() {
                 break;
             }
+        }
+
+        for constraint in &self.constraints {
+            println!("{:?}", constraint);
+        }
+        if !self.constraints.is_empty() {
+            panic!();
+        }
+    }
+
+    /// Attempts to solve a constraint. Returns true if the constraint was solved.
+    fn solve_constraint(&self, constraint: Constraint) -> bool {
+        match constraint {
+            Constraint::Equal(a, b) => self.unify(a, b),
+            Constraint::ArgumentOf(func, arg, index) => {
+                match (self.types.get(func), self.types.get_concrete(arg)) {
+                    // If we don't know either type yet, solving is impossible.
+                    (Type::Unknown(_), ConcreteType::Unknown(_)) => false,
+                    // If the function has too few inputs, solving is impossible.
+                    (Type::Function { inputs, .. }, _) if inputs.len() <= index => false,
+                    (Type::Function { inputs, .. }, _) => self.unify(inputs[index], arg),
+                    (a, b) => panic!("ArgumentOf unify error {a:?}, {b:?}"),
+                }
+            }
+            Constraint::ResultOf(func, res) => {
+                match (self.types.get(func), self.types.get(res)) {
+                    // If we don't know either type yet, solving is impossible.
+                    (Type::Unknown(_), Type::Unknown(_)) => false,
+                    (Type::Function { output, .. }, Type::Unknown(_)) => self.unify(res, output),
+                    // If the types are already equal, this constraint has been solved.
+                    (Type::Function { output, .. }, x) if self.types.get(output) == x => true,
+                    (a, b) => panic!("ResultOf unify error {a:?}, {b:?}"),
+                }
+            }
+            Constraint::Call(func, count) => match self.types.get(func) {
+                Type::Unknown(_) => {
+                    self.types.replace(
+                        func,
+                        Type::Function {
+                            inputs: (0..count).map(|_| self.types.unknown_type()).collect(),
+                            output: self.types.unknown_type(),
+                        },
+                    );
+                    true
+                }
+                Type::Function { inputs, .. } => inputs.len() == count,
+                _ => panic!("Call unify error"),
+            },
+        }
+    }
+
+    fn unify(&self, a: TypeId, b: TypeId) -> bool {
+        match (self.types.get(a), self.types.get(b)) {
+            (Type::Unknown(_), Type::Unknown(_)) => false,
+            (Type::Unknown(_), ty) => {
+                self.types.replace(a, ty);
+                true
+            }
+            (ty, Type::Unknown(_)) => {
+                self.types.replace(b, ty);
+                true
+            }
+            (
+                Type::Function {
+                    inputs: inputs1,
+                    output: output1,
+                },
+                Type::Function {
+                    inputs: inputs2,
+                    output: output2,
+                },
+            ) => {
+                if inputs1.len() != inputs2.len() {
+                    return false;
+                }
+
+                let mut extend = self.extend.borrow_mut();
+                for (a, b) in std::iter::zip(inputs1, inputs2) {
+                    extend.push(Constraint::Equal(a, b));
+                }
+                extend.push(Constraint::Equal(output1, output2));
+                true
+            }
+            (a, b) if a == b => true,
+            (a, b) => panic!("Type mismatch {a:?}, {b:?}"),
         }
     }
 }
@@ -263,6 +324,7 @@ impl HlirVisitorImmut for TypecheckContext {
     }
 
     fn visit_function(&mut self, function: &FnDef) -> VisitAction {
+        self.return_type = function.return_ty;
         for arg in &function.arguments {
             self.names.push((arg.name, arg.ty));
         }
@@ -270,6 +332,7 @@ impl HlirVisitorImmut for TypecheckContext {
         for _ in &function.arguments {
             self.names.pop();
         }
+        self.apply_constraints();
         VisitAction::Nothing
     }
 
@@ -349,6 +412,7 @@ impl HlirVisitorImmut for TypecheckContext {
                     self.constraints.push(ArgumentOf(callee.ty, arg.ty, idx));
                 }
                 self.constraints.push(ResultOf(callee.ty, node.ty));
+                self.constraints.push(Call(callee.ty, args.len()));
                 VisitAction::Recurse
             }
             NodeKind::Resume { arg } => {
@@ -390,8 +454,11 @@ impl HlirVisitorImmut for TypecheckContext {
             }
             NodeKind::Builtin(_) => VisitAction::Recurse,
             NodeKind::Function(_) => VisitAction::Recurse,
-            NodeKind::Return(_value) => {
-                // TODO
+            NodeKind::Return(value) => {
+                if let Some(value) = value {
+                    self.constraints
+                        .push(Constraint::Equal(value.ty, self.return_type));
+                }
                 VisitAction::Recurse
             }
         }

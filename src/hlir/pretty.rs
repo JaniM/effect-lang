@@ -190,8 +190,11 @@ impl HlirVisitorImmut for PrettyPrint<'_> {
                         Type::Function { inputs, output }
                     );
 
-                    self.text(resolve_symbol(handler.name));
-                    self.text("(");
+                    self.text(format!(
+                        "{} #{} (",
+                        resolve_symbol(handler.name),
+                        handler.effect_id.0,
+                    ));
                     for (i, (arg, ty)) in std::iter::zip(&handler.arguments, &inputs).enumerate() {
                         self.text(resolve_symbol(*arg));
                         self.text(": ");

@@ -1,4 +1,5 @@
 use lasso::Spur;
+use tinyvec::TinyVec;
 
 use crate::{
     intern::{resolve_symbol, INTERNER},
@@ -34,7 +35,7 @@ impl NameResolver {
                 let new_inputs = inputs
                     .iter()
                     .map(|x| self.resolve_type_names(*x))
-                    .collect::<Vec<_>>();
+                    .collect::<TinyVec<_>>();
                 let new_output = self.resolve_type_names(output);
                 if &new_inputs != &inputs || new_output != output {
                     self.types.insert(Type::Function {
@@ -51,6 +52,7 @@ impl NameResolver {
                     "int" => self.types.int(),
                     "string" => self.types.string(),
                     "unit" => self.types.unit(),
+                    "_" => self.types.unknown_type(),
                     _ => id,
                 }
             }

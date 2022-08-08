@@ -1,5 +1,6 @@
 #![feature(box_patterns)]
 #![feature(int_log)]
+#![feature(generic_arg_infer)]
 
 mod bytecode;
 mod hlir;
@@ -64,14 +65,15 @@ fn main() {
           print("done!");
         }
 
-        fn give_numbers(func: () -> unit, max) {
+        fn give_numbers(func: () -> unit, max) -> int {
           let count = 0;
           handle foo get_number() {
             count = count + 1;
             if (count < (max + 1)) { resume(count); }
-            return;
+            return 0;
           }
           func();
+          return 0;
         }
 
         fn wow() {
