@@ -3,7 +3,7 @@ use std::ops::Range;
 use chumsky::{prelude::*, Parser, Stream};
 use lasso::Spur;
 
-use crate::lexer::{Lexer, Token};
+use crate::lexer::{Delim, Lexer, Token};
 
 pub type Span = Range<usize>;
 
@@ -157,8 +157,8 @@ fn ident() -> impl MParser<Spur> {
     select! { Token::Identifier(x) => x }
 }
 
-fn parenthesized<T>(p: impl MParser<T>) -> impl MParser<T> {
-    p.delimited_by(just(Token::OpenRound), just(Token::CloseRound))
+fn parenthesized<T>(delim: Delim, p: impl MParser<T>) -> impl MParser<T> {
+    p.delimited_by(just(Token::Open(delim)), just(Token::Close(delim)))
 }
 
 fn atom(expression: impl MParser<Node>) -> impl MParser<Node> {
@@ -168,12 +168,13 @@ fn atom(expression: impl MParser<Node>) -> impl MParser<Node> {
         Token::Number(x) => RawNode::Number(x),
     };
 
-    literal.map_with_span(Spanned).or(parenthesized(expression))
+    literal
+        .map_with_span(Spanned)
+        .or(parenthesized(Delim::Round, expression))
 }
 
 fn list_of<O>(base: impl MParser<O>) -> impl MParser<Vec<O>> {
-    base.separated_by(just(Token::Comma))
-        .delimited_by(just(Token::OpenRound), just(Token::CloseRound))
+    parenthesized(Delim::Round, base.separated_by(just(Token::Comma)))
 }
 
 fn block_undelimited(
@@ -203,10 +204,12 @@ fn block(
     block_expression: impl MParser<Node>,
     expression: impl MParser<Node>,
 ) -> impl MParser<Spanned<Block>> {
-    block_undelimited(block_expression, expression)
-        .map(|x| x.0)
-        .delimited_by(just(Token::OpenCurly), just(Token::CloseCurly))
-        .map_with_span(Spanned)
+    parenthesized(
+        Delim::Curly,
+        block_undelimited(block_expression, expression),
+    )
+    .map(|x| x.0)
+    .map_with_span(Spanned)
 }
 
 fn effect_group() -> impl MParser<Node> {
@@ -236,9 +239,7 @@ fn effect_group() -> impl MParser<Node> {
             return_ty: return_ty.into(),
         });
 
-    let group = effect
-        .repeated()
-        .delimited_by(just(Token::OpenCurly), just(Token::CloseCurly));
+    let group = parenthesized(Delim::Curly, effect.repeated());
 
     just(Token::Effect)
         .ignore_then(ident())
@@ -271,11 +272,7 @@ fn handle_def(
             body,
         });
 
-    let group = effect
-        .clone()
-        .repeated()
-        .delimited_by(just(Token::OpenCurly), just(Token::CloseCurly))
-        .or(effect.map(|x| vec![x]));
+    let group = parenthesized(Delim::Curly, effect.clone().repeated()).or(effect.map(|x| vec![x]));
 
     let expr = block_undelimited(block_expression, expression);
 
@@ -343,7 +340,7 @@ fn if_clause(
 ) -> impl MParser<Node> {
     let block = block(block_expression, expression.clone());
     just(Token::If)
-        .ignore_then(parenthesized(expression.clone()))
+        .ignore_then(parenthesized(Delim::Round, expression.clone()))
         .map(Box::new)
         .then(block.clone())
         .then(just(Token::Else).ignore_then(block).or_not())
@@ -363,7 +360,7 @@ fn while_clause(
 ) -> impl MParser<Node> {
     let block = block(block_expression, expression.clone());
     just(Token::While)
-        .ignore_then(parenthesized(expression.clone()))
+        .ignore_then(parenthesized(Delim::Round, expression.clone()))
         .map(Box::new)
         .then(block.clone())
         .map(|(cond, body)| RawNode::While(While { cond, body }))

@@ -65,6 +65,12 @@ enum RawToken {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Delim {
+    Round,
+    Curly,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Token {
     Effect,
     Handle,
@@ -83,10 +89,8 @@ pub enum Token {
     Plus,
     Semicolon,
     Colon,
-    OpenCurly,
-    CloseCurly,
-    OpenRound,
-    CloseRound,
+    Open(Delim),
+    Close(Delim),
     Comma,
     Identifier(Spur),
     String(Spur),
@@ -133,10 +137,10 @@ impl Lexer<'_> {
             RawToken::Let => Token::Let,
             RawToken::Semicolon => Token::Semicolon,
             RawToken::Colon => Token::Colon,
-            RawToken::OpenCurly => Token::OpenCurly,
-            RawToken::CloseCurly => Token::CloseCurly,
-            RawToken::OpenRound => Token::OpenRound,
-            RawToken::CloseRound => Token::CloseRound,
+            RawToken::OpenCurly => Token::Open(Delim::Curly),
+            RawToken::CloseCurly => Token::Close(Delim::Curly),
+            RawToken::OpenRound => Token::Open(Delim::Round),
+            RawToken::CloseRound => Token::Close(Delim::Round),
             RawToken::Comma => Token::Comma,
 
             RawToken::Identifier => Token::Identifier(intern(slice)),
@@ -181,15 +185,15 @@ mod test {
             vec![
                 (Fn, 0..2),
                 (Identifier(key("main")), 3..7),
-                (OpenRound, 7..8),
-                (CloseRound, 8..9),
-                (OpenCurly, 10..11),
+                (Open(Delim::Round), 7..8),
+                (Close(Delim::Round), 8..9),
+                (Open(Delim::Curly), 10..11),
                 (Identifier(key("print")), 12..17),
-                (OpenRound, 17..18),
+                (Open(Delim::Round), 17..18),
                 (String(key("hello")), 18..25),
-                (CloseRound, 25..26),
+                (Close(Delim::Round), 25..26),
                 (Semicolon, 26..27),
-                (CloseCurly, 28..29)
+                (Close(Delim::Curly), 28..29)
             ]
         );
     }
