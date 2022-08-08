@@ -50,6 +50,7 @@ impl NameResolver {
                 match name {
                     "int" => self.types.int(),
                     "string" => self.types.string(),
+                    "unit" => self.types.unit(),
                     _ => id,
                 }
             }

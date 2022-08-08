@@ -52,8 +52,8 @@ impl<'s> PrettyPrint<'s> {
     fn format_type(&mut self, id: &TypeId) {
         let ty = self.types.get(*id);
         match ty {
-            Type::Unknown => {
-                self.text(format!("?{}", id.into_inner()));
+            Type::Unknown(id) => {
+                self.text(format!("?{id}"));
             }
             Type::Function { inputs, output } => {
                 self.text("(");
@@ -311,12 +311,18 @@ impl HlirVisitorImmut for PrettyPrint<'_> {
                 self.hard_break();
 
                 self.text("true:  ");
+                self.indent();
+                self.hard_break();
                 self.walk_node(if_true);
+                self.dedent();
                 self.hard_break();
 
                 if let Some(if_false) = if_false {
                     self.text("false: ");
+                    self.indent();
+                    self.hard_break();
                     self.walk_node(if_false);
+                    self.dedent();
                     self.hard_break();
                 }
 
@@ -336,9 +342,7 @@ impl HlirVisitorImmut for PrettyPrint<'_> {
                 self.dedent();
                 self.hard_break();
 
-                self.text("true:  ");
                 self.walk_node(body);
-                self.hard_break();
 
                 self.dedent();
 

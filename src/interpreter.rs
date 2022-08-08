@@ -37,8 +37,14 @@ struct Frame {
 }
 
 enum Handler {
-    Fn { idx: usize, frame_level: usize },
-    Effect { idx: usize },
+    Fn {
+        idx: usize,
+        frame_level: usize,
+    },
+    #[allow(unused)]
+    Effect {
+        idx: usize,
+    },
 }
 
 pub struct Interpreter<P: Ports> {
@@ -86,6 +92,7 @@ impl<P: Ports> Interpreter<P> {
         self
     }
 
+    #[allow(unused)]
     pub fn load_source(source: &str) -> Result<Self, BuildError> {
         let tokens = Lexer::new(source).collect()?;
         let ast = parse_tokens(tokens)?;

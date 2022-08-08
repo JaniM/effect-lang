@@ -24,16 +24,26 @@ pub struct Block {
 }
 
 #[derive(Debug, PartialEq)]
+pub enum TypeProto {
+    Name(Spur),
+    Function {
+        arguments: Vec<TypeProto>,
+        return_ty: Box<TypeProto>,
+    },
+    Unknown,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct Argument {
     pub name: Spur,
-    pub ty: Option<Spur>,
+    pub ty: TypeProto,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct FnDef {
     pub name: Option<Spur>,
     pub args: Vec<Argument>,
-    pub return_ty: Option<Spur>,
+    pub return_ty: TypeProto,
     pub body: Spanned<Block>,
 }
 
@@ -48,7 +58,7 @@ pub struct EffectDef {
     pub name: Spur,
     pub kind: EffectKind,
     pub args: Vec<Argument>,
-    pub return_ty: Option<Spur>,
+    pub return_ty: TypeProto,
 }
 
 #[derive(Debug, PartialEq)]
@@ -101,7 +111,7 @@ pub struct Let {
 pub struct EffectHandler {
     pub name: Spur,
     pub args: Vec<Argument>,
-    pub return_ty: Option<Spur>,
+    pub return_ty: TypeProto,
     pub body: Spanned<Block>,
 }
 
@@ -133,6 +143,15 @@ pub enum RawNode {
 pub struct Spanned<T>(pub T, pub Span);
 
 pub type Node = Spanned<RawNode>;
+
+impl From<Option<TypeProto>> for TypeProto {
+    fn from(opt: Option<TypeProto>) -> Self {
+        match opt {
+            Some(x) => x,
+            None => TypeProto::Unknown,
+        }
+    }
+}
 
 fn ident() -> impl MParser<Spur> {
     select! { Token::Identifier(x) => x }
@@ -191,11 +210,14 @@ fn block(
 }
 
 fn effect_group() -> impl MParser<Node> {
-    let ty = ident();
+    let ty = ty();
 
     let argument = ident()
         .then(just(Token::Colon).ignore_then(ty.clone()).or_not())
-        .map(|(name, ty)| Argument { name, ty });
+        .map(|(name, ty)| Argument {
+            name,
+            ty: ty.into(),
+        });
 
     let kind = select! {
         Token::Fn => EffectKind::Function,
@@ -211,7 +233,7 @@ fn effect_group() -> impl MParser<Node> {
             name,
             kind,
             args,
-            return_ty,
+            return_ty: return_ty.into(),
         });
 
     let group = effect
@@ -229,11 +251,14 @@ fn handle_def(
     block_expression: impl MParser<Node>,
     expression: impl MParser<Node>,
 ) -> impl MParser<Node> {
-    let ty = ident();
+    let ty = ty();
 
     let argument = ident()
         .then(just(Token::Colon).ignore_then(ty.clone()).or_not())
-        .map(|(name, ty)| Argument { name, ty });
+        .map(|(name, ty)| Argument {
+            name,
+            ty: ty.into(),
+        });
 
     let effect = ident()
         .then(list_of(argument))
@@ -242,7 +267,7 @@ fn handle_def(
         .map(|(((name, args), return_ty), body)| EffectHandler {
             name,
             args,
-            return_ty,
+            return_ty: return_ty.into(),
             body,
         });
 
@@ -268,15 +293,33 @@ fn handle_def(
         .map_with_span(Spanned)
 }
 
+fn ty() -> impl MParser<TypeProto> {
+    let ty = recursive(|ty| {
+        let func = list_of(ty.clone())
+            .then_ignore(just(Token::RightArrow))
+            .then(ty.clone().map(Box::new))
+            .map(|(arguments, return_ty)| TypeProto::Function {
+                arguments,
+                return_ty,
+            });
+        let name = ident().map(TypeProto::Name);
+        choice((func, name))
+    });
+    ty
+}
+
 fn fn_def(
     block_expression: impl MParser<Node>,
     expression: impl MParser<Node>,
 ) -> impl MParser<Node> {
-    let ty = ident();
+    let ty = ty();
 
     let argument = ident()
         .then(just(Token::Colon).ignore_then(ty.clone()).or_not())
-        .map(|(name, ty)| Argument { name, ty });
+        .map(|(name, ty)| Argument {
+            name,
+            ty: ty.into(),
+        });
 
     just(Token::Fn)
         .ignore_then(ident().or_not())
@@ -287,7 +330,7 @@ fn fn_def(
             RawNode::FnDef(FnDef {
                 name,
                 args,
-                return_ty,
+                return_ty: return_ty.into(),
                 body,
             })
         })
@@ -439,7 +482,7 @@ macro_rules! node {
         RawNode::FnDef(FnDef {
             name: Some(crate::intern::INTERNER.get_or_intern(stringify!($name))),
             args: $args,
-            return_ty: None,
+            return_ty: TypeProto::Unknown,
             body: $body
         })
     };
@@ -447,7 +490,7 @@ macro_rules! node {
         RawNode::FnDef(FnDef {
             name: Some(crate::intern::INTERNER.get_or_intern(stringify!($name))),
             args: vec![],
-            return_ty: None,
+            return_ty: TypeProto::Unknown,
             body: $body
         })
     };

@@ -1,8 +1,4 @@
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
 use lasso::Spur;
 
@@ -12,6 +8,7 @@ use crate::{
         visitor::{HlirVisitorImmut, VisitAction},
         FnDef, Hlir, Literal, Module, ModuleId, Node, NodeKind,
     },
+    inc,
     parser::BinopKind,
 };
 
@@ -23,7 +20,7 @@ pub struct TypeId(usize);
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Type {
     /// The type of this node is currently unknown. Used as a type inference point.
-    Unknown,
+    Unknown(u32),
     /// A currently unresolved type name.
     Name(Spur),
     Function {
@@ -36,11 +33,42 @@ pub enum Type {
     Unit,
 }
 
-// TODO: Figure out a way to do deduplication without duplicating the items.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ConcreteType {
+    /// The type of this node is currently unknown. Used as a type inference point.
+    Unknown(u32),
+    /// A currently unresolved type name.
+    Name(Spur),
+    Function {
+        inputs: Vec<ConcreteType>,
+        output: Box<ConcreteType>,
+    },
+    String,
+    Int,
+    Bool,
+    Unit,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct TypeStoreInternal {
     types: Vec<Type>,
-    dedup: HashMap<Type, TypeId>,
+    unknowns: usize,
+}
+
+impl TypeStoreInternal {
+    const UNIT: TypeId = TypeId(0);
+    const INT: TypeId = TypeId(1);
+    const STRING: TypeId = TypeId(2);
+    const BOOL: TypeId = TypeId(3);
+}
+
+impl Default for TypeStoreInternal {
+    fn default() -> Self {
+        Self {
+            types: vec![Type::Unit, Type::Int, Type::String, Type::Bool],
+            unknowns: Default::default(),
+        }
+    }
 }
 
 /// Stores types in an opaque, easily modifiable/queryable way. Produces a [TypeId] for each
@@ -50,62 +78,39 @@ struct TypeStoreInternal {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TypeStore(Rc<RefCell<TypeStoreInternal>>);
 
-impl TypeId {
-    pub fn into_inner(self) -> usize {
-        self.0
-    }
-
-    #[cfg(test)]
-    pub fn new(id: usize) -> Self {
-        Self(id)
-    }
-}
-
 impl TypeStore {
     /// Get a deduplicated unit type.
     pub fn unit(&self) -> TypeId {
-        self.insert(Type::Unit)
+        TypeStoreInternal::UNIT
     }
 
     /// Get a deduplicated boolean type.
     pub fn bool(&self) -> TypeId {
-        self.insert(Type::Bool)
+        TypeStoreInternal::BOOL
     }
 
     /// Get a deduplicated integer type.
     pub fn int(&self) -> TypeId {
-        self.insert(Type::Int)
+        TypeStoreInternal::INT
     }
 
     /// Get a deduplicated string type.
     pub fn string(&self) -> TypeId {
-        self.insert(Type::String)
+        TypeStoreInternal::STRING
     }
 
     /// Get a new unknown type. This will always be unique. Used to produce a type inference point
     /// in the [Hlir] tree.
     pub fn unknown_type(&self) -> TypeId {
-        self.insert_nodedup(Type::Unknown)
-    }
-
-    /// Inserts a new type to the store, deduplicating it. Since unknown types must not be
-    /// deduplicated, this function will panic if `ty == `[`Type::Unknown`].
-    pub fn insert(&self, ty: Type) -> TypeId {
-        assert_ne!(ty, Type::Unknown);
-        let mut store = self.0.borrow_mut();
-
-        if let Some(id) = store.dedup.get(&ty) {
-            return *id;
-        }
-
-        let id = TypeId(store.types.len());
-        store.types.push(ty.clone());
-        store.dedup.insert(ty, id);
-        id
+        let id = {
+            let mut store = self.0.borrow_mut();
+            inc!(store.unknowns) as u32
+        };
+        self.insert(Type::Unknown(id))
     }
 
     /// Inserts a new type to the store.
-    pub fn insert_nodedup(&self, ty: Type) -> TypeId {
+    pub fn insert(&self, ty: Type) -> TypeId {
         let mut store = self.0.borrow_mut();
 
         let id = TypeId(store.types.len());
@@ -122,6 +127,40 @@ impl TypeStore {
             .get(id.0)
             .expect("TypeStore::get on unknown TypeId")
             .clone()
+    }
+
+    pub fn get_concrete(&self, id: TypeId) -> ConcreteType {
+        match self.get(id) {
+            Type::Function { inputs, output } => ConcreteType::Function {
+                inputs: inputs.into_iter().map(|x| self.get_concrete(x)).collect(),
+                output: self.get_concrete(output).into(),
+            },
+            Type::Unknown(x) => ConcreteType::Unknown(x),
+            Type::Name(x) => ConcreteType::Name(x),
+            Type::String => ConcreteType::String,
+            Type::Int => ConcreteType::Int,
+            Type::Bool => ConcreteType::Bool,
+            Type::Unit => ConcreteType::Unit,
+        }
+    }
+
+    #[allow(unused)]
+    pub fn insert_concrete(&self, ty: ConcreteType) -> TypeId {
+        match ty {
+            ConcreteType::Function { inputs, output } => self.insert(Type::Function {
+                inputs: inputs
+                    .into_iter()
+                    .map(|x| self.insert_concrete(x))
+                    .collect(),
+                output: self.insert_concrete(*output),
+            }),
+            ConcreteType::Unknown(x) => self.insert(Type::Unknown(x)),
+            ConcreteType::Name(x) => self.insert(Type::Name(x)),
+            ConcreteType::String => self.insert(Type::String),
+            ConcreteType::Int => self.insert(Type::Int),
+            ConcreteType::Bool => self.insert(Type::Bool),
+            ConcreteType::Unit => self.insert(Type::Unit),
+        }
     }
 
     /// Replaces the type `id` refers to.
@@ -166,19 +205,19 @@ impl TypecheckContext {
             for &constraint in &self.constraints {
                 match constraint {
                     Constraint::Equal(a, b) => match (self.types.get(a), self.types.get(b)) {
-                        (Type::Unknown, Type::Unknown) => continue,
-                        (Type::Unknown, ty) => self.types.replace(a, ty),
-                        (ty, Type::Unknown) => self.types.replace(b, ty),
+                        (Type::Unknown(_), Type::Unknown(_)) => continue,
+                        (Type::Unknown(_), ty) => self.types.replace(a, ty),
+                        (ty, Type::Unknown(_)) => self.types.replace(b, ty),
                         (a, b) if a == b => continue,
                         (a, b) => panic!("Type mismatch {a:?}, {b:?}"),
                     },
                     Constraint::ArgumentOf(func, arg, index) => {
-                        match (self.types.get(func), self.types.get(arg)) {
-                            (Type::Function { .. }, Type::Unknown) => continue,
-                            (Type::Unknown, Type::Unknown) => continue,
+                        match (self.types.get(func), self.types.get_concrete(arg)) {
+                            (Type::Function { .. }, ConcreteType::Unknown(_)) => continue,
+                            (Type::Unknown(_), ConcreteType::Unknown(_)) => continue,
                             (Type::Function { inputs, .. }, arg_ty) => {
-                                let in_ty = self.types.get(inputs[index]);
-                                if matches!(in_ty, Type::Unknown) {
+                                let in_ty = self.types.get_concrete(inputs[index]);
+                                if matches!(in_ty, ConcreteType::Unknown(_)) {
                                     extend.push(Constraint::Equal(inputs[index], arg));
                                 } else if in_ty != arg_ty {
                                     panic!("ArgumentOf mismatch {func:?} {in_ty:?}, {arg:?} {arg_ty:?}");
@@ -189,8 +228,8 @@ impl TypecheckContext {
                     }
                     Constraint::ResultOf(func, res) => {
                         match (self.types.get(func), self.types.get(res)) {
-                            (Type::Unknown, Type::Unknown) => continue,
-                            (Type::Function { output, .. }, Type::Unknown) => {
+                            (Type::Unknown(_), Type::Unknown(_)) => continue,
+                            (Type::Function { output, .. }, Type::Unknown(_)) => {
                                 self.types.replace(res, self.types.get(output))
                             }
                             (Type::Function { output, .. }, x) if self.types.get(output) == x => {
@@ -365,8 +404,8 @@ pub fn report_unknown_types(hlir: &Hlir) {
     impl HlirVisitorImmut for Visitor {
         fn visit_node(&mut self, node: &Node) -> VisitAction {
             match self.0.get(node.ty) {
-                Type::Unknown => {
-                    println!("Unknown type: ?{}", node.ty.0);
+                Type::Unknown(id) => {
+                    println!("Unknown type: ?{}", id);
                     println!("{:?}", node);
                 }
                 _ => {}

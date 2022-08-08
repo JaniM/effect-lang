@@ -64,7 +64,7 @@ fn main() {
           print("done!");
         }
 
-        fn give_numbers(func, max) {
+        fn give_numbers(func: () -> unit, max) {
           let count = 0;
           handle foo get_number() {
             count = count + 1;
@@ -98,13 +98,13 @@ fn main() {
     typecheck.walk_hlir(&mut hlir);
     typecheck.apply_constraints();
 
-    // {
-    //     let mut pretty = PrettyPrint::new();
-    //     pretty.walk_hlir(&mut hlir);
-    //     println!("HIR:");
-    //     print_fragments(&pretty.fragments);
-    //     println!();
-    // }
+    {
+        let mut pretty = PrettyPrint::new();
+        pretty.walk_hlir(&mut hlir);
+        println!("HIR:");
+        print_fragments(&pretty.fragments);
+        println!();
+    }
 
     report_unknown_types(&mut hlir);
 

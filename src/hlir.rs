@@ -2,7 +2,6 @@ pub mod index;
 pub mod name_resolve;
 pub mod pretty;
 pub mod simplify;
-mod test;
 pub mod visitor;
 
 use std::collections::HashMap;
@@ -12,8 +11,8 @@ use lasso::Spur;
 
 use crate::inc;
 use crate::intern::INTERNER;
-use crate::parser::BinopKind;
 use crate::parser::{self as ast, EffectKind};
+use crate::parser::{BinopKind, TypeProto};
 use crate::typecheck::{Type, TypeId, TypeStore};
 
 use self::index::Index;
@@ -276,17 +275,11 @@ impl HlirBuilder {
                 .into_iter()
                 .map(|x| FnArgument {
                     name: x.name,
-                    ty: match x.ty {
-                        Some(key) => self.hlir.types.insert(Type::Name(key)),
-                        None => self.unknown_type(),
-                    },
+                    ty: self.typeproto_to_type(&x.ty, false),
                 })
                 .collect();
 
-            let output = match def.return_ty {
-                Some(key) => self.hlir.types.insert(Type::Name(key)),
-                None => self.hlir.types.unit(),
-            };
+            let output = self.typeproto_to_type(&def.return_ty, true);
 
             let ty = self.hlir.types.insert(Type::Function {
                 inputs: arguments.iter().map(|x| x.ty).collect(),
@@ -315,6 +308,25 @@ impl HlirBuilder {
         module.effect_groups.insert(group.id, group);
     }
 
+    fn typeproto_to_type(&self, ty: &ast::TypeProto, unknown_is_unit: bool) -> TypeId {
+        let type_store = &self.hlir.types;
+        match ty {
+            TypeProto::Function {
+                arguments,
+                return_ty,
+            } => type_store.insert(Type::Function {
+                inputs: arguments
+                    .iter()
+                    .map(|x| self.typeproto_to_type(x, unknown_is_unit))
+                    .collect(),
+                output: self.typeproto_to_type(return_ty, unknown_is_unit),
+            }),
+            TypeProto::Name(key) => type_store.insert(Type::Name(*key)),
+            TypeProto::Unknown if unknown_is_unit => type_store.unit(),
+            TypeProto::Unknown => self.unknown_type(),
+        }
+    }
+
     fn read_top_level_function(
         &mut self,
         def: ast::FnDef,
@@ -325,16 +337,10 @@ impl HlirBuilder {
             .into_iter()
             .map(|x| FnArgument {
                 name: x.name,
-                ty: match x.ty {
-                    Some(key) => self.hlir.types.insert(Type::Name(key)),
-                    None => self.unknown_type(),
-                },
+                ty: self.typeproto_to_type(&x.ty, false),
             })
             .collect();
-        let output = match def.return_ty {
-            Some(key) => self.hlir.types.insert(Type::Name(key)),
-            None => self.hlir.types.unit(),
-        };
+        let output = self.typeproto_to_type(&def.return_ty, true);
         let ty = self.hlir.types.insert(Type::Function {
             inputs: arguments.iter().map(|x| x.ty).collect(),
             output,
@@ -514,7 +520,7 @@ impl HlirBuilder {
         })
     }
 
-    fn unknown_type(&mut self) -> TypeId {
+    fn unknown_type(&self) -> TypeId {
         self.hlir.types.unknown_type()
     }
 

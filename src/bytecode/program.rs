@@ -17,6 +17,7 @@ pub struct Program {
     pub insts: Vec<Instruction<u8>>,
     pub constants: Vec<Value>,
     pub entrypoint: usize,
+    #[allow(unused)]
     function_names: HashMap<usize, Option<Spur>>,
 }
 
@@ -62,6 +63,7 @@ impl Program {
         }
     }
 
+    #[allow(unused)]
     pub fn print(&self) {
         for (idx, inst) in self.insts.iter().enumerate() {
             if let Some(key) = self.function_names.get(&idx) {

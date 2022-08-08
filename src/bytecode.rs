@@ -21,7 +21,7 @@ use crate::{
     },
     intern::resolve_symbol,
     parser::BinopKind,
-    typecheck::{Type, TypeStore},
+    typecheck::{ConcreteType, TypeStore},
 };
 
 #[derive(Clone, Debug, DebugPls, PartialEq)]
@@ -57,6 +57,7 @@ impl<T: Display> Display for Register<T> {
 
 #[derive(Clone, Copy, Debug, DebugPls, PartialEq)]
 pub enum Instruction<T = DefaultReg> {
+    #[allow(unused)]
     Copy(Register<T>, Register<T>),
     /// Loads a constant at idx to register.
     LoadConstant(u32, Register<T>),
@@ -374,9 +375,12 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
 
                 self.inst(Instruction::Call(func));
 
-                match self.ctx.types.get(callee.ty) {
-                    Type::Function { output, .. } if output == self.ctx.types.unit() => {}
-                    Type::Function { .. } => {
+                match self.ctx.types.get_concrete(callee.ty) {
+                    ConcreteType::Function {
+                        output: box ConcreteType::Unit,
+                        ..
+                    } => {}
+                    ConcreteType::Function { .. } => {
                         let out = self.out_reg();
                         self.inst(Instruction::Pop(out));
                     }
@@ -553,6 +557,7 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
     }
 }
 
+#[allow(unused)]
 fn print_inst(inst: &Instruction<usize>, consts: &Vec<Value>) {
     let pad: usize = 4;
     let spad = pad + 3;
@@ -594,6 +599,7 @@ fn print_inst(inst: &Instruction<usize>, consts: &Vec<Value>) {
     }
 }
 
+#[allow(unused)]
 pub fn print_function(func: &Function<usize>, ctx: &FunctionBuilderCtx) {
     for (idx, block) in func.blocks.iter().enumerate() {
         println!(
