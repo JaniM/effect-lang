@@ -235,6 +235,7 @@ pub struct TypecheckContext {
     resume_type: Option<TypeId>,
     return_type: TypeId,
     extend: RefCell<Vec<Constraint>>,
+    late_instantiate: bool,
     pub errors: Vec<Error>,
 }
 
@@ -536,7 +537,9 @@ impl HlirVisitorImmut for TypecheckContext {
             }
             NodeKind::Builtin(_) => VisitAction::Recurse,
             NodeKind::Function(_) => {
-                self.instantiate_fn(node.ty);
+                if !self.late_instantiate {
+                    self.instantiate_fn(node.ty);
+                }
                 VisitAction::Recurse
             }
             NodeKind::Return(value) => {
@@ -547,11 +550,17 @@ impl HlirVisitorImmut for TypecheckContext {
                 VisitAction::Recurse
             }
             NodeKind::ApplyType { expr, ty, .. } => {
+                let late_instantiate = self.late_instantiate;
+                self.late_instantiate = true;
+
+                self.walk_node(expr);
+                self.late_instantiate = late_instantiate;
+
                 self.constraints
                     .push(Constraint::LeftEqual(node.ty, expr.ty));
                 self.constraints.push(Constraint::Apply(node.ty, *ty));
 
-                VisitAction::Recurse
+                VisitAction::Nothing
             }
         }
     }

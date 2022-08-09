@@ -57,10 +57,11 @@ fn main() {
     let source = unindent(
         r#"
         fn main() {
-          let v = pass(0);
-          takes_int(v);
+          let f = manifest<int>;
+          let v = pass(f());
         }
 
+        fn manifest<a>() -> a { return manifest(); }
         fn pass<a>(x: a) -> a { return x; }
         fn takes_int(x: int) {}
         "#,
