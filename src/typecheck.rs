@@ -7,7 +7,7 @@ use tinyvec::TinyVec;
 
 use crate::{
     hlir::{
-        index::Index,
+        index::{Header, Index},
         visitor::{HlirVisitorImmut, VisitAction},
         FnDef, Hlir, Literal, Module, ModuleId, Node, NodeKind,
     },
@@ -200,6 +200,19 @@ impl TypeStore {
         }
         store.types[id.0] = new_ty;
     }
+
+    fn type_is_solvwd(&self, id: TypeId) -> bool {
+        match self.get(id) {
+            Type::Unknown(_) => false,
+            Type::Name(_) => false,
+            Type::Function { inputs, output } => {
+                !(inputs.into_iter().any(|x| !self.type_is_solvwd(x))
+                    || !self.type_is_solvwd(output))
+            }
+            Type::Forall(_, x) => self.type_is_solvwd(x),
+            _ => true,
+        }
+    }
 }
 
 /// Represents a type constraint. Used by [`TypecheckContext::apply_constraints()`].
@@ -362,12 +375,13 @@ impl TypecheckContext {
     }
 
     fn instantiate_fn(&self, id: TypeId) {
-        match self.types.get(id) {
-            Type::Function { .. } => {}
-            Type::Forall(param, _) => {
-                self.rewrite_type_parameter(param, self.types.unknown_type(), id);
+        loop {
+            match self.types.get(id) {
+                Type::Forall(param, _) => {
+                    self.rewrite_type_parameter(param, self.types.unknown_type(), id);
+                }
+                _ => break,
             }
-            _ => {}
         }
     }
 
@@ -404,7 +418,28 @@ impl HlirVisitorImmut for TypecheckContext {
 
     fn visit_module(&mut self, module: &Module) -> VisitAction {
         self.module = module.id;
-        VisitAction::Recurse
+
+        // We need to solve functions in a specific order. Take for example:
+        //
+        // ```ignore
+        // fn foo(x: _) { takes_int(x); }
+        // fn bar() { foo(0); }
+        // ```
+        //
+        // This is a completely valid program, but if we attempt to solve `bar` before `foo`, we
+        // won't yet know the type foo takes.
+        let mut function_order = vec![];
+        for (&id, func) in &module.functions {
+            if self.types.type_is_solvwd(func.header.ty) {
+                function_order.push(id);
+            } else {
+                function_order.insert(0, id);
+            }
+        }
+        for id in function_order {
+            self.visit_function(module.functions.get(&id).unwrap());
+        }
+        VisitAction::Nothing
     }
 
     fn visit_function(&mut self, function: &FnDef) -> VisitAction {
@@ -536,7 +571,16 @@ impl HlirVisitorImmut for TypecheckContext {
                 VisitAction::Recurse
             }
             NodeKind::Builtin(_) => VisitAction::Recurse,
-            NodeKind::Function(_) => {
+            NodeKind::Function(id) => {
+                let header = self.index.functions.get(id).unwrap();
+                let ty = match header {
+                    Header::Fn(header) => header.ty,
+                    Header::Effect(header) => header.ty,
+                };
+                self.types.replace(
+                    node.ty,
+                    self.types.insert_concrete(self.types.get_concrete(ty)),
+                );
                 if !self.late_instantiate {
                     self.instantiate_fn(node.ty);
                 }

@@ -3,8 +3,8 @@ use std::borrow::Cow;
 use crate::{
     extract,
     hlir::{visitor::VisitAction, Literal},
-    intern::resolve_symbol,
-    parser::{BinopKind, EffectKind},
+    intern::{resolve_symbol, INTERNER},
+    parser::{BinopKind, EffectKind, Generic},
     typecheck::{Type, TypeId, TypeStore},
 };
 
@@ -26,6 +26,7 @@ pub struct PrettyPrint<'s> {
     pub fragments: Vec<Fragment<'s>>,
     index: Index,
     types: TypeStore,
+    generics: Vec<Vec<Generic>>,
 }
 
 impl<'s> PrettyPrint<'s> {
@@ -51,6 +52,11 @@ impl<'s> PrettyPrint<'s> {
 
     fn format_type(&mut self, id: &TypeId) {
         let ty = self.types.get(*id);
+        let default_params = || {
+            vec![Generic {
+                name: INTERNER.get_or_intern_static("a"),
+            }]
+        };
         match ty {
             Type::Ref(_) => todo!(),
             Type::Unknown(id) => {
@@ -84,10 +90,18 @@ impl<'s> PrettyPrint<'s> {
                 self.text(resolve_symbol(key));
             }
             Type::Forall(x, ty) => {
-                self.text(format!("for {x}. "));
+                self.generics.push(default_params());
+                let x = x as usize;
+                let param_names = self.generics.last().cloned().unwrap_or_else(default_params);
+                self.text(format!("for {}. ", resolve_symbol(param_names[x].name)));
                 self.format_type(&ty);
+                self.generics.pop();
             }
-            Type::Parameter(x) => self.text(format!("${x}")),
+            Type::Parameter(x) => {
+                let x = x as usize;
+                let param_names = self.generics.last().cloned().unwrap_or_else(default_params);
+                self.text(resolve_symbol(param_names[x].name));
+            }
         }
     }
 }
@@ -148,15 +162,29 @@ impl HlirVisitorImmut for PrettyPrint<'_> {
 
     fn visit_function(&mut self, function: &FnDef) -> VisitAction {
         let FnDef {
-            header: FnHeader { id, name, .. },
+            header: FnHeader { name, generics, .. },
             return_ty,
             body,
             arguments,
         } = function;
 
-        let name = name.map_or("<unnamed>", resolve_symbol);
-        self.text(format!("fn {} #{} (", name, id.0));
+        self.generics.push(generics.clone());
 
+        let name = name.map_or("<unnamed>", resolve_symbol);
+        self.text(format!("fn {}", name));
+
+        if generics.len() > 0 {
+            self.text("<");
+            for (i, arg) in generics.iter().enumerate() {
+                self.text(resolve_symbol(arg.name));
+                if i < generics.len() - 1 {
+                    self.text(", ");
+                }
+            }
+            self.text(">");
+        }
+
+        self.text("(");
         for (i, arg) in arguments.iter().enumerate() {
             self.text(resolve_symbol(arg.name));
             self.text(": ");
@@ -165,7 +193,6 @@ impl HlirVisitorImmut for PrettyPrint<'_> {
                 self.text(", ");
             }
         }
-
         self.text(") -> ");
         self.format_type(return_ty);
         self.hard_break();
@@ -174,6 +201,8 @@ impl HlirVisitorImmut for PrettyPrint<'_> {
         self.walk_node(body);
         self.dedent();
         self.hard_break();
+
+        self.generics.pop();
 
         VisitAction::Nothing
     }

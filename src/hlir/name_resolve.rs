@@ -7,7 +7,7 @@ use crate::{
 };
 
 use super::{
-    index::{Header, Index, Item},
+    index::{Index, Item},
     visitor::{HlirVisitor, VisitAction},
     Literal, ModuleId, NodeKind,
 };
@@ -86,27 +86,26 @@ impl HlirVisitor for NameResolver {
             }
         }
 
-        VisitAction::Recurse
-    }
-
-    fn visit_function(&mut self, function: &mut super::FnDef) -> VisitAction {
-        function.header.ty = self.resolve_type_names(function.header.ty);
-        let mut ty = self.types.get(function.header.ty);
-        loop {
-            match ty {
-                Type::Forall(_, t) => ty = self.types.get(t),
-                _ => break,
-            }
-        }
-        match ty {
-            Type::Function { inputs, output } => {
-                for (arg, ty) in std::iter::zip(&mut function.arguments, inputs) {
-                    arg.ty = ty;
+        for function in module.functions.values_mut() {
+            function.header.ty = self.resolve_type_names(function.header.ty);
+            let mut ty = self.types.get(function.header.ty);
+            loop {
+                match ty {
+                    Type::Forall(_, t) => ty = self.types.get(t),
+                    _ => break,
                 }
-                function.return_ty = output;
             }
-            _ => unreachable!(),
+            match ty {
+                Type::Function { inputs, output } => {
+                    for (arg, ty) in std::iter::zip(&mut function.arguments, inputs) {
+                        arg.ty = ty;
+                    }
+                    function.return_ty = output;
+                }
+                _ => unreachable!(),
+            }
         }
+
         VisitAction::Recurse
     }
 
@@ -128,18 +127,7 @@ impl HlirVisitor for NameResolver {
                 let module = self.index.modules.get(&self.module).unwrap();
                 match module.names.get(&name) {
                     Some(Item::Fn(id)) => {
-                        let header = self.index.functions.get(id).unwrap();
-                        match header {
-                            Header::Fn(header) => {
-                                node.kind = NodeKind::Function(header.id);
-                                node.ty = header.ty.clone();
-                            }
-                            Header::Effect(header) => {
-                                node.kind = NodeKind::Function(header.id);
-                                node.ty = header.ty.clone();
-                            }
-                        }
-                        node.ty = self.types.insert_concrete(self.types.get_concrete(node.ty));
+                        node.kind = NodeKind::Function(*id);
                     }
                     Some(Item::EffectGroup(_header)) => {
                         todo!()

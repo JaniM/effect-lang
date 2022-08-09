@@ -121,6 +121,7 @@ pub struct Node {
 pub struct FnHeader {
     pub id: FunctionId,
     pub name: Option<Spur>,
+    pub generics: Vec<Generic>,
     pub ty: TypeId,
 }
 
@@ -363,6 +364,7 @@ impl HlirBuilder {
 
         let header = FnHeader {
             id: FunctionId(inc!(self.func_id_counter)),
+            generics: def.generics,
             name: def.name,
             ty,
         };

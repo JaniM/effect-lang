@@ -39,7 +39,7 @@ pub struct Argument {
     pub ty: TypeProto,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Generic {
     pub name: Spur,
 }

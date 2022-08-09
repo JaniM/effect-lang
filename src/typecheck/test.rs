@@ -66,3 +66,23 @@ fn instantiate_functions_early() {
     let typecheck = typecheck_test(&source);
     assert!(typecheck.errors.len() > 0);
 }
+
+/// If we attempt to solve main before `takes_int`, we won't yet know what type `takes_int` should
+/// return. We should always expect ambiguous definition to be solved first.
+#[test]
+fn solve_ambiguous_functions_first() {
+    let source = unindent::unindent(
+        r#"
+        fn main() {
+          takes_string(pass(takes_int, 0));
+        }
+
+        fn pass<a, b>(f: (a) -> b, x: a) -> b { return f(x); }
+        fn takes_int(x: int) -> _ { return ""; }
+        fn takes_string(x: string) { }
+        "#,
+    );
+
+    let typecheck = typecheck_test(&source);
+    assert_eq!(typecheck.errors, vec![]);
+}
