@@ -108,6 +108,11 @@ impl<P: Ports> Interpreter<P> {
         typecheck.walk_hlir(&mut hlir);
         typecheck.apply_constraints();
 
+        for error in typecheck.errors {
+            println!("{:?}", error);
+            panic!();
+        }
+
         report_unknown_types(&mut hlir);
 
         let program = Program::from_hlir(&hlir);

@@ -91,7 +91,14 @@ impl HlirVisitor for NameResolver {
 
     fn visit_function(&mut self, function: &mut super::FnDef) -> VisitAction {
         function.header.ty = self.resolve_type_names(function.header.ty);
-        match self.types.get(function.header.ty) {
+        let mut ty = self.types.get(function.header.ty);
+        loop {
+            match ty {
+                Type::Forall(_, t) => ty = self.types.get(t),
+                _ => break,
+            }
+        }
+        match ty {
             Type::Function { inputs, output } => {
                 for (arg, ty) in std::iter::zip(&mut function.arguments, inputs) {
                     arg.ty = ty;
@@ -132,6 +139,7 @@ impl HlirVisitor for NameResolver {
                                 node.ty = header.ty.clone();
                             }
                         }
+                        node.ty = self.types.insert_concrete(self.types.get_concrete(node.ty));
                     }
                     Some(Item::EffectGroup(_header)) => {
                         todo!()
@@ -178,6 +186,10 @@ impl HlirVisitor for NameResolver {
                     handler.effect_id = effect.header.id;
                 }
 
+                VisitAction::Recurse
+            }
+            NodeKind::ApplyType { ty, .. } => {
+                *ty = self.resolve_type_names(*ty);
                 VisitAction::Recurse
             }
             _ => VisitAction::Recurse,

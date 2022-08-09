@@ -1,4 +1,6 @@
-use std::{cell::RefCell, collections::HashSet, rc::Rc};
+mod test;
+
+use std::{cell::RefCell, collections::HashSet, iter::zip, rc::Rc};
 
 use lasso::Spur;
 use tinyvec::TinyVec;
@@ -15,11 +17,12 @@ use crate::{
 
 /// An opaque id used with [TypeStore].
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub struct TypeId(usize);
+pub struct TypeId(pub usize);
 
 /// A type representing all possible types.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Type {
+    Ref(TypeId),
     /// The type of this node is currently unknown. Used as a type inference point.
     Unknown(u32),
     /// A currently unresolved type name.
@@ -28,6 +31,10 @@ pub enum Type {
         inputs: TinyVec<[TypeId; 4]>,
         output: TypeId,
     },
+    /// The type is valid for all types represented by the parameter.
+    Forall(u32, TypeId),
+    /// A type parameter referring to some Forall
+    Parameter(u32),
     String,
     Int,
     Bool,
@@ -44,6 +51,10 @@ pub enum ConcreteType {
         inputs: Vec<ConcreteType>,
         output: Box<ConcreteType>,
     },
+    /// The type is valid for all types represented by the parameter.
+    Forall(u32, Box<ConcreteType>),
+    /// A type parameter referring to some Forall
+    Parameter(u32),
     String,
     Int,
     Bool,
@@ -123,19 +134,25 @@ impl TypeStore {
     /// Use [`Self::replace()`] to update it.
     pub fn get(&self, id: TypeId) -> Type {
         let store = self.0.borrow();
-        store
-            .types
-            .get(id.0)
-            .expect("TypeStore::get on unknown TypeId")
-            .clone()
+        let mut ty = &Type::Ref(id);
+        while let Type::Ref(id) = ty {
+            ty = store
+                .types
+                .get(id.0)
+                .expect("TypeStore::get on unknown TypeId");
+        }
+        ty.clone()
     }
 
     pub fn get_concrete(&self, id: TypeId) -> ConcreteType {
         match self.get(id) {
+            Type::Ref(id) => self.get_concrete(id),
             Type::Function { inputs, output } => ConcreteType::Function {
                 inputs: inputs.into_iter().map(|x| self.get_concrete(x)).collect(),
                 output: self.get_concrete(output).into(),
             },
+            Type::Forall(x, id) => ConcreteType::Forall(x, self.get_concrete(id).into()),
+            Type::Parameter(x) => ConcreteType::Parameter(x),
             Type::Unknown(x) => ConcreteType::Unknown(x),
             Type::Name(x) => ConcreteType::Name(x),
             Type::String => ConcreteType::String,
@@ -155,6 +172,8 @@ impl TypeStore {
                     .collect(),
                 output: self.insert_concrete(*output),
             }),
+            ConcreteType::Forall(x, t) => self.insert(Type::Forall(x, self.insert_concrete(*t))),
+            ConcreteType::Parameter(x) => self.insert(Type::Parameter(x)),
             ConcreteType::Unknown(x) => self.insert(Type::Unknown(x)),
             ConcreteType::Name(x) => self.insert(Type::Name(x)),
             ConcreteType::String => self.insert(Type::String),
@@ -165,17 +184,31 @@ impl TypeStore {
     }
 
     /// Replaces the type `id` refers to.
-    fn replace(&self, id: TypeId, ty: Type) {
+    fn replace(&self, id: TypeId, ty: TypeId) {
         let mut store = self.0.borrow_mut();
-        store.types[id.0] = ty;
+        store.types[id.0] = Type::Ref(ty);
+    }
+
+    /// Rewrites the referred type.
+    fn rewrite(&self, mut id: TypeId, new_ty: Type) {
+        let mut store = self.0.borrow_mut();
+        loop {
+            match store.types[id.0] {
+                Type::Ref(new_id) => id = new_id,
+                _ => break,
+            }
+        }
+        store.types[id.0] = new_ty;
     }
 }
 
 /// Represents a type constraint. Used by [`TypecheckContext::apply_constraints()`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Constraint {
+pub enum Constraint {
     /// The two types must be equal.
     Equal(TypeId, TypeId),
+    /// Propagate equality only to the left parameter.
+    LeftEqual(TypeId, TypeId),
     /// function, argument, index
     /// The argument is used as a parameter to function at index.
     ArgumentOf(TypeId, TypeId, usize),
@@ -184,6 +217,12 @@ enum Constraint {
     ResultOf(TypeId, TypeId),
     /// The type can be called with N arguments..
     Call(TypeId, usize),
+    Apply(TypeId, TypeId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Error {
+    pub constraints: Vec<Constraint>,
 }
 
 #[derive(Default)]
@@ -196,6 +235,7 @@ pub struct TypecheckContext {
     resume_type: Option<TypeId>,
     return_type: TypeId,
     extend: RefCell<Vec<Constraint>>,
+    pub errors: Vec<Error>,
 }
 
 impl TypecheckContext {
@@ -224,11 +264,10 @@ impl TypecheckContext {
             }
         }
 
-        for constraint in &self.constraints {
-            println!("{:?}", constraint);
-        }
         if !self.constraints.is_empty() {
-            panic!();
+            self.errors.push(Error {
+                constraints: std::mem::take(&mut self.constraints),
+            });
         }
     }
 
@@ -236,40 +275,51 @@ impl TypecheckContext {
     fn solve_constraint(&self, constraint: Constraint) -> bool {
         match constraint {
             Constraint::Equal(a, b) => self.unify(a, b),
-            Constraint::ArgumentOf(func, arg, index) => {
-                match (self.types.get(func), self.types.get_concrete(arg)) {
-                    // If we don't know either type yet, solving is impossible.
-                    (Type::Unknown(_), ConcreteType::Unknown(_)) => false,
-                    // If the function has too few inputs, solving is impossible.
-                    (Type::Function { inputs, .. }, _) if inputs.len() <= index => false,
-                    (Type::Function { inputs, .. }, _) => self.unify(inputs[index], arg),
-                    (a, b) => panic!("ArgumentOf unify error {a:?}, {b:?}"),
+            Constraint::LeftEqual(a, b) => {
+                match (self.types.get_concrete(a), self.types.get_concrete(b)) {
+                    (ConcreteType::Unknown(_), x) => {
+                        self.types.replace(a, self.types.insert_concrete(x));
+                        true
+                    }
+                    (a, b) if a == b => true,
+                    (_, _) => false,
                 }
             }
+            Constraint::ArgumentOf(func, arg, index) => self.solve_argumentof(func, arg, index),
             Constraint::ResultOf(func, res) => {
                 match (self.types.get(func), self.types.get(res)) {
                     // If we don't know either type yet, solving is impossible.
                     (Type::Unknown(_), Type::Unknown(_)) => false,
-                    (Type::Function { output, .. }, Type::Unknown(_)) => self.unify(res, output),
-                    // If the types are already equal, this constraint has been solved.
-                    (Type::Function { output, .. }, x) if self.types.get(output) == x => true,
-                    (a, b) => panic!("ResultOf unify error {a:?}, {b:?}"),
+                    (Type::Function { output, .. }, _) => self.unify(res, output),
+                    (_a, _b) => false,
                 }
             }
             Constraint::Call(func, count) => match self.types.get(func) {
-                Type::Unknown(_) => {
-                    self.types.replace(
-                        func,
-                        Type::Function {
-                            inputs: (0..count).map(|_| self.types.unknown_type()).collect(),
-                            output: self.types.unknown_type(),
-                        },
-                    );
+                Type::Forall(_, _) => unreachable!(),
+                Type::Function { inputs, .. } => inputs.len() == count,
+                _ => false,
+            },
+            Constraint::Apply(forall, replace_with) => match self.types.get(forall) {
+                Type::Unknown(_) => false,
+                Type::Forall(param, _) => {
+                    self.rewrite_type_parameter(param, replace_with, forall);
                     true
                 }
-                Type::Function { inputs, .. } => inputs.len() == count,
-                _ => panic!("Call unify error"),
+                Type::Parameter(_) => todo!(),
+                _ => false,
             },
+        }
+    }
+
+    fn solve_argumentof(&self, func: TypeId, arg: TypeId, index: usize) -> bool {
+        match (self.types.get(func), self.types.get_concrete(arg)) {
+            // If we don't know either type yet, solving is impossible.
+            (Type::Unknown(_), ConcreteType::Unknown(_)) => false,
+            // If the function has too few inputs, solving is impossible.
+            (Type::Function { inputs, .. }, _) if inputs.len() <= index => false,
+            (Type::Function { inputs, .. }, _) => self.unify(inputs[index], arg),
+            (Type::Forall(_, _), _) => false,
+            (_a, _b) => false,
         }
     }
 
@@ -277,11 +327,11 @@ impl TypecheckContext {
         match (self.types.get(a), self.types.get(b)) {
             (Type::Unknown(_), Type::Unknown(_)) => false,
             (Type::Unknown(_), ty) => {
-                self.types.replace(a, ty);
+                self.types.rewrite(a, ty);
                 true
             }
             (ty, Type::Unknown(_)) => {
-                self.types.replace(b, ty);
+                self.types.rewrite(b, ty);
                 true
             }
             (
@@ -299,14 +349,47 @@ impl TypecheckContext {
                 }
 
                 let mut extend = self.extend.borrow_mut();
-                for (a, b) in std::iter::zip(inputs1, inputs2) {
+                for (a, b) in zip(inputs1, inputs2) {
                     extend.push(Constraint::Equal(a, b));
                 }
                 extend.push(Constraint::Equal(output1, output2));
                 true
             }
             (a, b) if a == b => true,
-            (a, b) => panic!("Type mismatch {a:?}, {b:?}"),
+            (_a, _b) => false,
+        }
+    }
+
+    fn instantiate_fn(&self, id: TypeId) {
+        match self.types.get(id) {
+            Type::Function { .. } => {}
+            Type::Forall(param, _) => {
+                self.rewrite_type_parameter(param, self.types.unknown_type(), id);
+            }
+            _ => {}
+        }
+    }
+
+    fn rewrite_type_parameter(&self, param: u32, replace_with: TypeId, ty: TypeId) {
+        match self.types.get(ty) {
+            Type::Function { inputs, output } => {
+                for input in inputs {
+                    self.rewrite_type_parameter(param, replace_with, input);
+                }
+                self.rewrite_type_parameter(param, replace_with, output);
+            }
+            Type::Forall(p, x) if p == param => {
+                self.rewrite_type_parameter(param, replace_with, x);
+                self.types.replace(ty, x);
+            }
+            Type::Forall(_p, x) => {
+                self.rewrite_type_parameter(param, replace_with, x);
+            }
+            Type::Parameter(p) if p == param => {
+                self.types.replace(ty, replace_with);
+            }
+            Type::Parameter(_) => {}
+            _ => {}
         }
     }
 }
@@ -353,10 +436,9 @@ impl HlirVisitorImmut for TypecheckContext {
                         .iter()
                         .find(|e| e.header.id == handler.effect_id)
                         .unwrap();
-                    let effect_type = self.types.get(effect.header.ty);
-                    self.types.replace(handler.ty, effect_type);
+                    self.types.replace(handler.ty, effect.header.ty);
 
-                    for (name, arg) in std::iter::zip(&handler.arguments, &effect.arguments) {
+                    for (name, arg) in zip(&handler.arguments, &effect.arguments) {
                         self.names.push((*name, arg.ty));
                     }
 
@@ -453,12 +535,22 @@ impl HlirVisitorImmut for TypecheckContext {
                 VisitAction::Recurse
             }
             NodeKind::Builtin(_) => VisitAction::Recurse,
-            NodeKind::Function(_) => VisitAction::Recurse,
+            NodeKind::Function(_) => {
+                self.instantiate_fn(node.ty);
+                VisitAction::Recurse
+            }
             NodeKind::Return(value) => {
                 if let Some(value) = value {
                     self.constraints
                         .push(Constraint::Equal(value.ty, self.return_type));
                 }
+                VisitAction::Recurse
+            }
+            NodeKind::ApplyType { expr, ty, .. } => {
+                self.constraints
+                    .push(Constraint::LeftEqual(node.ty, expr.ty));
+                self.constraints.push(Constraint::Apply(node.ty, *ty));
+
                 VisitAction::Recurse
             }
         }

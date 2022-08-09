@@ -40,8 +40,14 @@ pub struct Argument {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct Generic {
+    pub name: Spur,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct FnDef {
     pub name: Option<Spur>,
+    pub generics: Vec<Generic>,
     pub args: Vec<Argument>,
     pub return_ty: TypeProto,
     pub body: Spanned<Block>,
@@ -137,6 +143,7 @@ pub enum RawNode {
     Let(Let),
     Assign(Let),
     Return(Option<Box<Node>>),
+    ApplyType { name: Spur, ty: Spur },
 }
 
 #[derive(Debug, PartialEq)]
@@ -168,7 +175,14 @@ fn atom(expression: impl MParser<Node>) -> impl MParser<Node> {
         Token::Number(x) => RawNode::Number(x),
     };
 
-    literal
+    let apply_type = ident()
+        .then_ignore(just(Token::LessThan))
+        .then(ident())
+        .then_ignore(just(Token::GreaterThan))
+        .map(|(name, ty)| RawNode::ApplyType { name, ty });
+
+    apply_type
+        .or(literal)
         .map_with_span(Spanned)
         .or(parenthesized(Delim::Round, expression))
 }
@@ -318,14 +332,21 @@ fn fn_def(
             ty: ty.into(),
         });
 
+    let generics = ident()
+        .map(|name| Generic { name })
+        .separated_by(just(Token::Comma))
+        .delimited_by(just(Token::LessThan), just(Token::GreaterThan));
+
     just(Token::Fn)
         .ignore_then(ident().or_not())
+        .then(generics.or_not())
         .then(list_of(argument))
         .then(just(Token::RightArrow).ignore_then(ty).or_not())
         .then(block(block_expression, expression))
-        .map(|(((name, args), return_ty), body)| {
+        .map(|((((name, generics), args), return_ty), body)| {
             RawNode::FnDef(FnDef {
                 name,
+                generics: generics.unwrap_or_else(Vec::new),
                 args,
                 return_ty: return_ty.into(),
                 body,
@@ -478,6 +499,7 @@ macro_rules! node {
     (fn $name:ident ($args:expr) $body:expr) => {
         RawNode::FnDef(FnDef {
             name: Some(crate::intern::INTERNER.get_or_intern(stringify!($name))),
+            generics: vec![],
             args: $args,
             return_ty: TypeProto::Unknown,
             body: $body
@@ -486,6 +508,7 @@ macro_rules! node {
     (fn $name:ident () $body:expr) => {
         RawNode::FnDef(FnDef {
             name: Some(crate::intern::INTERNER.get_or_intern(stringify!($name))),
+            generics: vec![],
             args: vec![],
             return_ty: TypeProto::Unknown,
             body: $body

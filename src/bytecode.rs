@@ -557,6 +557,7 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
 
                 VisitAction::Nothing
             }
+            NodeKind::ApplyType { .. } => VisitAction::Recurse,
         }
     }
 }

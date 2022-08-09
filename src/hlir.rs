@@ -11,7 +11,7 @@ use lasso::Spur;
 
 use crate::inc;
 use crate::intern::INTERNER;
-use crate::parser::{self as ast, EffectKind};
+use crate::parser::{self as ast, EffectKind, Generic, Spanned};
 use crate::parser::{BinopKind, TypeProto};
 use crate::typecheck::{Type, TypeId, TypeStore};
 
@@ -102,6 +102,10 @@ pub enum NodeKind {
     Name(Spur),
     Builtin(usize),
     Function(FunctionId),
+    ApplyType {
+        expr: Box<Node>,
+        ty: TypeId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -275,11 +279,11 @@ impl HlirBuilder {
                 .into_iter()
                 .map(|x| FnArgument {
                     name: x.name,
-                    ty: self.typeproto_to_type(&x.ty, false),
+                    ty: self.typeproto_to_type(&x.ty, &[], false),
                 })
                 .collect();
 
-            let output = self.typeproto_to_type(&def.return_ty, true);
+            let output = self.typeproto_to_type(&def.return_ty, &[], true);
 
             let ty = self.hlir.types.insert(Type::Function {
                 inputs: arguments.iter().map(|x| x.ty).collect(),
@@ -308,7 +312,12 @@ impl HlirBuilder {
         module.effect_groups.insert(group.id, group);
     }
 
-    fn typeproto_to_type(&self, ty: &ast::TypeProto, unknown_is_unit: bool) -> TypeId {
+    fn typeproto_to_type(
+        &self,
+        ty: &ast::TypeProto,
+        generics: &[Generic],
+        unknown_is_unit: bool,
+    ) -> TypeId {
         let type_store = &self.hlir.types;
         match ty {
             TypeProto::Function {
@@ -317,11 +326,14 @@ impl HlirBuilder {
             } => type_store.insert(Type::Function {
                 inputs: arguments
                     .iter()
-                    .map(|x| self.typeproto_to_type(x, unknown_is_unit))
+                    .map(|x| self.typeproto_to_type(x, generics, unknown_is_unit))
                     .collect(),
-                output: self.typeproto_to_type(return_ty, unknown_is_unit),
+                output: self.typeproto_to_type(return_ty, generics, unknown_is_unit),
             }),
-            TypeProto::Name(key) => type_store.insert(Type::Name(*key)),
+            TypeProto::Name(key) => match generics.iter().position(|x| x.name == *key) {
+                Some(x) => type_store.insert(Type::Parameter(x as u32)),
+                None => type_store.insert(Type::Name(*key)),
+            },
             TypeProto::Unknown if unknown_is_unit => type_store.unit(),
             TypeProto::Unknown => self.unknown_type(),
         }
@@ -337,14 +349,18 @@ impl HlirBuilder {
             .into_iter()
             .map(|x| FnArgument {
                 name: x.name,
-                ty: self.typeproto_to_type(&x.ty, false),
+                ty: self.typeproto_to_type(&x.ty, &def.generics, false),
             })
             .collect();
-        let output = self.typeproto_to_type(&def.return_ty, true);
-        let ty = self.hlir.types.insert(Type::Function {
+        let output = self.typeproto_to_type(&def.return_ty, &def.generics, true);
+        let mut ty = self.hlir.types.insert(Type::Function {
             inputs: arguments.iter().map(|x| x.ty).collect(),
             output,
         });
+        for (id, _generic) in def.generics.iter().enumerate().rev() {
+            ty = self.hlir.types.insert(Type::Forall(id as u32, ty));
+        }
+
         let header = FnHeader {
             id: FunctionId(inc!(self.func_id_counter)),
             name: def.name,
@@ -474,6 +490,12 @@ impl HlirBuilder {
                     .transpose()?
                     .map(Box::new),
             ),
+            ast::RawNode::ApplyType { name, ty } => NodeKind::ApplyType {
+                expr: self
+                    .read_node(module, Spanned(ast::RawNode::Name(name), span.clone()))?
+                    .into(),
+                ty: self.hlir.types.insert(Type::Name(ty)),
+            },
         };
 
         let ty = match &kind {

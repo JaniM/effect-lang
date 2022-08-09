@@ -52,6 +52,7 @@ impl<'s> PrettyPrint<'s> {
     fn format_type(&mut self, id: &TypeId) {
         let ty = self.types.get(*id);
         match ty {
+            Type::Ref(_) => todo!(),
             Type::Unknown(id) => {
                 self.text(format!("?{id}"));
             }
@@ -82,6 +83,11 @@ impl<'s> PrettyPrint<'s> {
                 self.text("?");
                 self.text(resolve_symbol(key));
             }
+            Type::Forall(x, ty) => {
+                self.text(format!("for {x}. "));
+                self.format_type(&ty);
+            }
+            Type::Parameter(x) => self.text(format!("${x}")),
         }
     }
 }
@@ -416,6 +422,16 @@ impl HlirVisitorImmut for PrettyPrint<'_> {
                     self.walk_node(value);
                     self.dedent();
                 }
+
+                VisitAction::Nothing
+            }
+            NodeKind::ApplyType { expr, ty } => {
+                self.text("(");
+                self.walk_node(expr);
+                self.text(") with(");
+                self.format_type(ty);
+                self.text("): ");
+                self.format_type(&node.ty);
 
                 VisitAction::Nothing
             }

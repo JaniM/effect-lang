@@ -56,32 +56,14 @@ macro_rules! inc {
 fn main() {
     let source = unindent(
         r#"
-        effect foo {
-          fn get_number() -> int;
-        }
-
         fn main() {
-          give_numbers(wow, 5);
-          print("done!");
+          let v = pass(0);
+          takes_int(v);
         }
 
-        fn give_numbers(func: () -> unit, max) -> int {
-          let count = 0;
-          handle foo get_number() {
-            count = count + 1;
-            if (count < (max + 1)) { resume(count); }
-            return 0;
-          }
-          func();
-          return 0;
-        }
-
-        fn wow() {
-          while (true) {
-            let num = get_number();
-            print_int(num);
-          }
-        }"#,
+        fn pass<a>(x: a) -> a { return x; }
+        fn takes_int(x: int) {}
+        "#,
     );
 
     println!("Source:\n{}\n", source);
@@ -108,6 +90,11 @@ fn main() {
         println!();
     }
 
+    for error in typecheck.errors {
+        println!("{:?}", error);
+        panic!();
+    }
+
     report_unknown_types(&mut hlir);
 
     let module = hlir.modules.get(&hlir::ModuleId(0)).unwrap();
@@ -120,8 +107,8 @@ fn main() {
     }
 
     let program = Program::from_hlir(&hlir);
-    // println!("\nBytecode: ");
-    // program.print();
+    println!("\nBytecode: ");
+    program.print();
 
     let mut interpreter = Interpreter::<StandardPorts>::new(program).with_stdout(std::io::stdout());
     load_standard_builtins(&mut interpreter);

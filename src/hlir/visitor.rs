@@ -103,6 +103,9 @@ pub trait HlirVisitor: Sized {
                 NodeKind::Name(_) => {}
                 NodeKind::Builtin(_) => {}
                 NodeKind::Function(_) => {}
+                NodeKind::ApplyType { expr, .. } => {
+                    self.walk_node(expr);
+                }
             },
             VisitAction::Nothing => {}
         }
@@ -223,6 +226,9 @@ pub trait HlirVisitorImmut: Sized {
                 NodeKind::Name(_) => {}
                 NodeKind::Builtin(_) => {}
                 NodeKind::Function(_) => {}
+                NodeKind::ApplyType { expr, .. } => {
+                    self.walk_node(expr);
+                }
             },
             VisitAction::Nothing => {}
         }
