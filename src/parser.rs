@@ -3,7 +3,10 @@ use std::ops::Range;
 use chumsky::{prelude::*, Parser, Stream};
 use lasso::Spur;
 
-use crate::lexer::{Delim, Lexer, Token};
+use crate::{
+    intern::INTERNER,
+    lexer::{Delim, Lexer, Token},
+};
 
 pub type Span = Range<usize>;
 
@@ -23,11 +26,17 @@ pub struct Block {
     pub stmts: Vec<Node>,
 }
 
+#[derive(Debug, Default, PartialEq)]
+pub struct EffectType {
+    pub effects: Vec<Spur>,
+}
+
 #[derive(Debug, PartialEq)]
 pub enum TypeProto {
     Name(Spur),
     Function {
         arguments: Vec<TypeProto>,
+        effects: EffectType,
         return_ty: Box<TypeProto>,
     },
     Unknown,
@@ -49,6 +58,7 @@ pub struct FnDef {
     pub name: Option<Spur>,
     pub generics: Vec<Generic>,
     pub args: Vec<Argument>,
+    pub effects: EffectType,
     pub return_ty: TypeProto,
     pub body: Spanned<Block>,
 }
@@ -304,13 +314,26 @@ fn handle_def(
         .map_with_span(Spanned)
 }
 
+fn effect_ty() -> impl MParser<EffectType> {
+    let effects = ident().separated_by(just(Token::Plus));
+
+    just(Token::Identifier(INTERNER.get_or_intern_static("with")))
+        .ignore_then(effects)
+        .or_not()
+        .map(|x| EffectType {
+            effects: x.unwrap_or_else(Vec::new),
+        })
+}
+
 fn ty() -> impl MParser<TypeProto> {
     let ty = recursive(|ty| {
         let func = list_of(ty.clone())
             .then_ignore(just(Token::RightArrow))
             .then(ty.clone().map(Box::new))
-            .map(|(arguments, return_ty)| TypeProto::Function {
+            .then(effect_ty())
+            .map(|((arguments, return_ty), effects)| TypeProto::Function {
                 arguments,
+                effects,
                 return_ty,
             });
         let name = ident().map(TypeProto::Name);
@@ -342,12 +365,14 @@ fn fn_def(
         .then(generics.or_not())
         .then(list_of(argument))
         .then(just(Token::RightArrow).ignore_then(ty).or_not())
+        .then(effect_ty())
         .then(block(block_expression, expression))
-        .map(|((((name, generics), args), return_ty), body)| {
+        .map(|(((((name, generics), args), return_ty), effects), body)| {
             RawNode::FnDef(FnDef {
                 name,
                 generics: generics.unwrap_or_else(Vec::new),
                 args,
+                effects,
                 return_ty: return_ty.into(),
                 body,
             })
@@ -460,130 +485,4 @@ pub fn parse(source: &str) -> Result<Vec<Node>, Vec<Simple<Token>>> {
 pub fn parse_tokens(tokens: Vec<(Token, Span)>) -> Result<Vec<Node>, Vec<Simple<Token>>> {
     let stream = Stream::from_iter(0..0, tokens.into_iter());
     parser().parse(stream)
-}
-
-#[allow(unused_macros)]
-macro_rules! node {
-    (box $($t:tt)+) => {
-        Box::new(node!($($t)+))
-    };
-    ($a:literal .. $b:literal, $($t:tt)+) => {
-        Spanned(node!($($t)+), $a .. $b)
-    };
-    (let $name:ident ($s:expr) = $value:expr) => {
-        RawNode::Let(Let {
-            name: Spanned(crate::intern::INTERNER.get_or_intern(stringify!($name)), $s),
-            value: Box::new($value),
-        })
-    };
-    (if $cond:expr, $true:expr) => {
-        RawNode::If(If {
-            cond: Box::new($cond),
-            if_true: $true,
-            if_false: None,
-        })
-    };
-    (binop $kind:ident, $left:expr, $right:expr) => {
-        RawNode::Binop(Binop {
-            kind: BinopKind::$kind,
-            left: Box::new($left),
-            right: Box::new($right),
-        })
-    };
-    (call $callee:expr, $($arg:expr),*) => {
-        RawNode::Call(Call {
-            callee: Box::new($callee),
-            args: vec![$($arg),*],
-        })
-    };
-    (fn $name:ident ($args:expr) $body:expr) => {
-        RawNode::FnDef(FnDef {
-            name: Some(crate::intern::INTERNER.get_or_intern(stringify!($name))),
-            generics: vec![],
-            args: $args,
-            return_ty: TypeProto::Unknown,
-            body: $body
-        })
-    };
-    (fn $name:ident () $body:expr) => {
-        RawNode::FnDef(FnDef {
-            name: Some(crate::intern::INTERNER.get_or_intern(stringify!($name))),
-            generics: vec![],
-            args: vec![],
-            return_ty: TypeProto::Unknown,
-            body: $body
-        })
-    };
-    (block, $($stmt:expr),*) => {
-        Block {
-            stmts: vec![$($stmt),+]
-        }
-    };
-    (number $v:expr) => {
-        RawNode::Number($v)
-    };
-    (name $v:expr) => {
-        RawNode::Name(crate::intern::INTERNER.get_or_intern($v))
-    };
-    (string $v:expr) => {
-        RawNode::String(crate::intern::INTERNER.get_or_intern($v))
-    };
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use pretty_assertions::assert_eq;
-    use unindent::unindent;
-
-    #[test]
-    fn simple() {
-        let source = r#"fn main() { print("hello"); }"#;
-        let ast = parse(source).unwrap();
-
-        let main = node!(0..29, fn main()
-            node!(10..29, block,
-                node!(12..26, call
-                    node!(12..17, name "print"),
-                    node!(18..25, string "hello")
-                )
-            )
-        );
-
-        assert_eq!(ast, vec![main]);
-    }
-
-    #[test]
-    fn condition() {
-        let source = unindent(
-            r#"
-            fn main() {
-                let a = 1;
-                if (a == 1) {
-                    print("hello");
-                }
-            }
-        "#,
-        );
-        let ast = parse(&source).unwrap();
-
-        let assign = node!(16..26,
-            let a (20..21) = node!(24..25, number 1));
-
-        let if_clause = node!(31..74, if
-            node!(35..41, binop Equals,
-                node!(35..36, name "a"),
-                node!(40..41, number 1)),
-            node!(43..74, block,
-                node!(53..67, call
-                    node!(53..58, name "print"),
-                    node!(59..66, string "hello"))
-            )
-        );
-
-        let main = node!(0..76, fn main()
-            node!(10..76, block, assign, if_clause));
-
-        assert_eq!(ast, vec![main]);
-    }
 }

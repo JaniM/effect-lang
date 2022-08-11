@@ -4,7 +4,7 @@ use tinyvec::tiny_vec;
 
 use crate::{
     bytecode::Value,
-    typecheck::TypeStore,
+    typecheck::{EffectSet, TypeStore},
     typecheck::{Type, TypeId},
 };
 
@@ -70,6 +70,7 @@ where
         types.insert(Type::Function {
             inputs: tiny_vec![],
             output: types.unit(),
+            effects: EffectSet::default(),
         })
     }
 }
@@ -93,6 +94,7 @@ where
         types.insert(Type::Function {
             inputs: tiny_vec![[_; _] => A::extract_type(types)],
             output: types.unit(),
+            effects: EffectSet::default(),
         })
     }
 }

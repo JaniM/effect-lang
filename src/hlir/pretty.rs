@@ -5,7 +5,7 @@ use crate::{
     hlir::{visitor::VisitAction, Literal},
     intern::{resolve_symbol, INTERNER},
     parser::{BinopKind, EffectKind, Generic},
-    typecheck::{Type, TypeId, TypeStore},
+    typecheck::{EffectSet, Type, TypeId, TypeStore},
 };
 
 use super::{
@@ -62,7 +62,11 @@ impl<'s> PrettyPrint<'s> {
             Type::Unknown(id) => {
                 self.text(format!("?{id}"));
             }
-            Type::Function { inputs, output } => {
+            Type::Function {
+                inputs,
+                output,
+                effects,
+            } => {
                 self.text("(");
                 for (i, input) in inputs.iter().enumerate() {
                     self.format_type(input);
@@ -72,6 +76,23 @@ impl<'s> PrettyPrint<'s> {
                 }
                 self.text(") -> ");
                 self.format_type(&output);
+                let names = match effects {
+                    EffectSet::Solved { effects } => effects
+                        .iter()
+                        .map(|x| self.index.effect_groups.get(x).unwrap().name)
+                        .collect(),
+                    EffectSet::Unsolved { names } => names,
+                };
+                let names_len = names.len();
+                if names_len > 0 {
+                    self.text(" with ");
+                }
+                for (i, eff) in names.into_iter().enumerate() {
+                    self.text(resolve_symbol(eff));
+                    if i != names_len - 1 {
+                        self.text("+");
+                    }
+                }
             }
             Type::String => {
                 self.text("string");
@@ -328,7 +349,9 @@ impl HlirVisitorImmut for PrettyPrint<'_> {
             }
             NodeKind::Resume { arg } => {
                 self.text("resume(");
-                self.walk_node(arg);
+                if let Some(arg) = arg {
+                    self.walk_node(arg);
+                }
                 self.text(")");
                 VisitAction::Nothing
             }

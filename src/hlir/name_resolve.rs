@@ -1,9 +1,8 @@
 use lasso::Spur;
-use tinyvec::TinyVec;
 
 use crate::{
     intern::{resolve_symbol, INTERNER},
-    typecheck::{Type, TypeId, TypeStore},
+    typecheck::{EffectSet, Type, TypeId, TypeStore},
 };
 
 use super::{
@@ -29,34 +28,53 @@ impl NameResolver {
         self.names.contains(name)
     }
 
-    fn resolve_type_names(&self, id: TypeId) -> TypeId {
+    fn resolve_type_names(&self, id: TypeId) {
         match self.types.get(id) {
-            Type::Function { inputs, output } => {
-                let new_inputs = inputs
-                    .iter()
-                    .map(|x| self.resolve_type_names(*x))
-                    .collect::<TinyVec<_>>();
-                let new_output = self.resolve_type_names(output);
-                if &new_inputs != &inputs || new_output != output {
-                    self.types.insert(Type::Function {
-                        inputs: new_inputs,
-                        output: new_output,
-                    })
-                } else {
-                    id
+            Type::Function {
+                inputs,
+                output,
+                effects,
+            } => {
+                let module = self.index.modules.get(&self.module).unwrap();
+                let new_effects = match effects {
+                    EffectSet::Unsolved { names } => {
+                        let mut effects = vec![];
+                        for name in names {
+                            match module.names.get(&name) {
+                                Some(Item::EffectGroup(id)) => effects.push(*id),
+                                _ => todo!(),
+                            }
+                        }
+                        EffectSet::new(effects)
+                    }
+                    x => x,
+                };
+                for input in &inputs {
+                    self.resolve_type_names(*input);
                 }
+                self.resolve_type_names(output);
+                self.types.rewrite(
+                    id,
+                    Type::Function {
+                        inputs,
+                        output,
+                        effects: new_effects,
+                    },
+                );
             }
             Type::Name(key) => {
                 let name = resolve_symbol(key);
-                match name {
+                let ty = match name {
                     "int" => self.types.int(),
                     "string" => self.types.string(),
                     "unit" => self.types.unit(),
                     "_" => self.types.unknown_type(),
                     _ => id,
-                }
+                };
+                self.types.replace(id, ty);
             }
-            _ => id,
+            Type::Forall(_, ty) => self.resolve_type_names(ty),
+            _ => {}
         }
     }
 }
@@ -73,9 +91,9 @@ impl HlirVisitor for NameResolver {
 
         for group in module.effect_groups.values_mut() {
             for effect in &mut group.effects {
-                effect.header.ty = self.resolve_type_names(effect.header.ty);
+                self.resolve_type_names(effect.header.ty);
                 match self.types.get(effect.header.ty) {
-                    Type::Function { inputs, output } => {
+                    Type::Function { inputs, output, .. } => {
                         for (arg, ty) in std::iter::zip(&mut effect.arguments, inputs) {
                             arg.ty = ty;
                         }
@@ -87,7 +105,7 @@ impl HlirVisitor for NameResolver {
         }
 
         for function in module.functions.values_mut() {
-            function.header.ty = self.resolve_type_names(function.header.ty);
+            self.resolve_type_names(function.header.ty);
             let mut ty = self.types.get(function.header.ty);
             loop {
                 match ty {
@@ -96,7 +114,7 @@ impl HlirVisitor for NameResolver {
                 }
             }
             match ty {
-                Type::Function { inputs, output } => {
+                Type::Function { inputs, output, .. } => {
                     for (arg, ty) in std::iter::zip(&mut function.arguments, inputs) {
                         arg.ty = ty;
                     }
@@ -146,8 +164,8 @@ impl HlirVisitor for NameResolver {
             NodeKind::Call { callee, args } => {
                 match &callee.kind {
                     &NodeKind::Name(name) if name == INTERNER.get_or_intern_static("resume") => {
-                        assert_eq!(args.len(), 1);
-                        let arg = args.pop().unwrap().into();
+                        assert!(args.len() <= 1);
+                        let arg = args.pop().map(Box::new);
                         node.kind = NodeKind::Resume { arg };
                         node.ty = self.types.unit();
                     }
@@ -177,13 +195,13 @@ impl HlirVisitor for NameResolver {
                 VisitAction::Recurse
             }
             NodeKind::ApplyType { ty, .. } => {
-                *ty = self.resolve_type_names(*ty);
+                self.resolve_type_names(*ty);
                 VisitAction::Recurse
             }
             _ => VisitAction::Recurse,
         };
 
-        node.ty = self.resolve_type_names(node.ty);
+        self.resolve_type_names(node.ty);
 
         out
     }

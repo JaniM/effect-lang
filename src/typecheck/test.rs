@@ -2,7 +2,11 @@
 
 use crate::{
     hlir::{
-        name_resolve::NameResolver, simplify::Simplifier, visitor::HlirVisitor, FileId, HlirBuilder,
+        name_resolve::NameResolver,
+        pretty::{print_fragments, PrettyPrint},
+        simplify::Simplifier,
+        visitor::HlirVisitor,
+        FileId, HlirBuilder,
     },
     parser::parse,
     typecheck::TypecheckContext,
@@ -21,6 +25,14 @@ fn typecheck_test(source: &str) -> TypecheckContext {
     let mut typecheck = TypecheckContext::new();
     typecheck.walk_hlir(&mut hlir);
     typecheck.apply_constraints();
+
+    {
+        let mut pretty = PrettyPrint::new();
+        pretty.walk_hlir(&mut hlir);
+        println!("HIR:");
+        print_fragments(&pretty.fragments);
+        println!();
+    }
 
     typecheck
 }

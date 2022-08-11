@@ -56,12 +56,36 @@ macro_rules! inc {
 fn main() {
     let source = unindent(
         r#"
-        fn main() {
-          pass(takes_int, 0);
+        effect foo {
+          fn get_number() -> int;
         }
 
-        fn pass<a, b>(f: (a) -> b, x: a) -> b { return f(x); }
-        fn takes_int(x: int) -> _ { return ""; }
+        effect io {
+          fn print_(text: int);
+        }
+
+        fn main() {
+          handle io print_(text) { print_int(text); resume(); }
+          give_numbers(wow, 5);
+          print("done!");
+        }
+
+        fn give_numbers(func: () -> unit with foo+io, max) {
+          let count = 0;
+          handle foo get_number() {
+            count = count + 1;
+            if (count < (max + 1)) { resume(count); }
+            return;
+          }
+          func();
+        }
+
+        fn wow() -> unit with foo+io {
+          while (true) {
+            let num = get_number();
+            print_(num);
+          }
+        }
         "#,
     );
 

@@ -13,7 +13,7 @@ use crate::inc;
 use crate::intern::INTERNER;
 use crate::parser::{self as ast, EffectKind, Generic, Spanned};
 use crate::parser::{BinopKind, TypeProto};
-use crate::typecheck::{Type, TypeId, TypeStore};
+use crate::typecheck::{EffectSet, Type, TypeId, TypeStore};
 
 use self::index::Index;
 
@@ -29,7 +29,7 @@ pub struct ModuleId(pub usize);
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FunctionId(pub usize);
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EffectGroupId(pub usize);
 
 /// Block is a flat sequence of expressions, evaluated in order.
@@ -79,7 +79,7 @@ pub enum NodeKind {
         args: Vec<Node>,
     },
     Resume {
-        arg: Box<Node>,
+        arg: Option<Box<Node>>,
     },
     If {
         cond: Box<Node>,
@@ -289,6 +289,7 @@ impl HlirBuilder {
             let ty = self.hlir.types.insert(Type::Function {
                 inputs: arguments.iter().map(|x| x.ty).collect(),
                 output,
+                effects: EffectSet::default(),
             });
 
             let header = EffectHeader {
@@ -324,12 +325,16 @@ impl HlirBuilder {
             TypeProto::Function {
                 arguments,
                 return_ty,
+                effects,
             } => type_store.insert(Type::Function {
                 inputs: arguments
                     .iter()
                     .map(|x| self.typeproto_to_type(x, generics, unknown_is_unit))
                     .collect(),
                 output: self.typeproto_to_type(return_ty, generics, unknown_is_unit),
+                effects: EffectSet::Unsolved {
+                    names: effects.effects.clone(),
+                },
             }),
             TypeProto::Name(key) => match generics.iter().position(|x| x.name == *key) {
                 Some(x) => type_store.insert(Type::Parameter(x as u32)),
@@ -357,6 +362,9 @@ impl HlirBuilder {
         let mut ty = self.hlir.types.insert(Type::Function {
             inputs: arguments.iter().map(|x| x.ty).collect(),
             output,
+            effects: EffectSet::Unsolved {
+                names: def.effects.effects,
+            },
         });
         for (id, _generic) in def.generics.iter().enumerate().rev() {
             ty = self.hlir.types.insert(Type::Forall(id as u32, ty));

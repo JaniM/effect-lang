@@ -508,8 +508,13 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
             }
             NodeKind::Resume { arg } => {
                 let reg = self.next_reg();
-                self.walk_with_out(reg, arg);
-                self.inst(Instruction::Push(reg));
+                match arg {
+                    Some(arg) => {
+                        self.walk_with_out(reg, arg);
+                        self.inst(Instruction::Push(reg));
+                    }
+                    None => {}
+                }
 
                 self.inst(Instruction::Resume);
 

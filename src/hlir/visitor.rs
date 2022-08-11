@@ -72,7 +72,9 @@ pub trait HlirVisitor: Sized {
                     }
                 }
                 NodeKind::Resume { arg } => {
-                    self.walk_node(arg);
+                    if let Some(arg) = arg {
+                        self.walk_node(arg);
+                    }
                 }
                 NodeKind::If {
                     cond,
@@ -195,7 +197,9 @@ pub trait HlirVisitorImmut: Sized {
                     }
                 }
                 NodeKind::Resume { arg } => {
-                    self.walk_node(arg);
+                    if let Some(arg) = arg {
+                        self.walk_node(arg);
+                    }
                 }
                 NodeKind::If {
                     cond,

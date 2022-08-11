@@ -9,7 +9,7 @@ use crate::{
     hlir::{
         index::{Header, Index},
         visitor::{HlirVisitorImmut, VisitAction},
-        FnDef, Hlir, Literal, Module, ModuleId, Node, NodeKind,
+        EffectGroupId, FnDef, Hlir, Literal, Module, ModuleId, Node, NodeKind,
     },
     inc,
     parser::BinopKind,
@@ -18,6 +18,12 @@ use crate::{
 /// An opaque id used with [TypeStore].
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TypeId(pub usize);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum EffectSet {
+    Solved { effects: Rc<Vec<EffectGroupId>> },
+    Unsolved { names: Vec<Spur> },
+}
 
 /// A type representing all possible types.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -30,6 +36,7 @@ pub enum Type {
     Function {
         inputs: TinyVec<[TypeId; 4]>,
         output: TypeId,
+        effects: EffectSet,
     },
     /// The type is valid for all types represented by the parameter.
     Forall(u32, TypeId),
@@ -50,6 +57,7 @@ pub enum ConcreteType {
     Function {
         inputs: Vec<ConcreteType>,
         output: Box<ConcreteType>,
+        effects: EffectSet,
     },
     /// The type is valid for all types represented by the parameter.
     Forall(u32, Box<ConcreteType>),
@@ -89,6 +97,43 @@ impl Default for TypeStoreInternal {
 /// It is generally expected that a [Node]'s [TypeId] is *never* changed.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TypeStore(Rc<RefCell<TypeStoreInternal>>);
+
+impl Default for EffectSet {
+    fn default() -> Self {
+        Self::Solved {
+            effects: Default::default(),
+        }
+    }
+}
+
+impl EffectSet {
+    /// Produce a new EffectSet out of known effects.
+    pub fn new(mut effects: Vec<EffectGroupId>) -> Self {
+        effects.sort_unstable();
+        effects.dedup();
+        Self::Solved {
+            effects: effects.into(),
+        }
+    }
+
+    /// Produce a new EffectSet as a set join of two EffectSets.
+    fn join(&self, other: &EffectSet) -> Self {
+        let mut vec = self.assume_solved().clone();
+        vec.extend_from_slice(&other.assume_solved());
+        vec.sort_unstable();
+        vec.dedup();
+        Self::Solved {
+            effects: vec.into(),
+        }
+    }
+
+    fn assume_solved(&self) -> &Vec<EffectGroupId> {
+        match self {
+            EffectSet::Solved { effects } => effects,
+            EffectSet::Unsolved { .. } => unreachable!("EffectSet::assume_solved not solved"),
+        }
+    }
+}
 
 impl TypeStore {
     /// Get a deduplicated unit type.
@@ -147,9 +192,14 @@ impl TypeStore {
     pub fn get_concrete(&self, id: TypeId) -> ConcreteType {
         match self.get(id) {
             Type::Ref(id) => self.get_concrete(id),
-            Type::Function { inputs, output } => ConcreteType::Function {
+            Type::Function {
+                inputs,
+                output,
+                effects,
+            } => ConcreteType::Function {
                 inputs: inputs.into_iter().map(|x| self.get_concrete(x)).collect(),
                 output: self.get_concrete(output).into(),
+                effects,
             },
             Type::Forall(x, id) => ConcreteType::Forall(x, self.get_concrete(id).into()),
             Type::Parameter(x) => ConcreteType::Parameter(x),
@@ -165,12 +215,17 @@ impl TypeStore {
     #[allow(unused)]
     pub fn insert_concrete(&self, ty: ConcreteType) -> TypeId {
         match ty {
-            ConcreteType::Function { inputs, output } => self.insert(Type::Function {
+            ConcreteType::Function {
+                inputs,
+                output,
+                effects,
+            } => self.insert(Type::Function {
                 inputs: inputs
                     .into_iter()
                     .map(|x| self.insert_concrete(x))
                     .collect(),
                 output: self.insert_concrete(*output),
+                effects,
             }),
             ConcreteType::Forall(x, t) => self.insert(Type::Forall(x, self.insert_concrete(*t))),
             ConcreteType::Parameter(x) => self.insert(Type::Parameter(x)),
@@ -184,13 +239,16 @@ impl TypeStore {
     }
 
     /// Replaces the type `id` refers to.
-    fn replace(&self, id: TypeId, ty: TypeId) {
+    pub fn replace(&self, id: TypeId, ty: TypeId) {
+        if id == ty {
+            return;
+        }
         let mut store = self.0.borrow_mut();
         store.types[id.0] = Type::Ref(ty);
     }
 
     /// Rewrites the referred type.
-    fn rewrite(&self, mut id: TypeId, new_ty: Type) {
+    pub fn rewrite(&self, mut id: TypeId, new_ty: Type) {
         let mut store = self.0.borrow_mut();
         loop {
             match store.types[id.0] {
@@ -205,7 +263,7 @@ impl TypeStore {
         match self.get(id) {
             Type::Unknown(_) => false,
             Type::Name(_) => false,
-            Type::Function { inputs, output } => {
+            Type::Function { inputs, output, .. } => {
                 !(inputs.into_iter().any(|x| !self.type_is_solvwd(x))
                     || !self.type_is_solvwd(output))
             }
@@ -326,13 +384,12 @@ impl TypecheckContext {
     }
 
     fn solve_argumentof(&self, func: TypeId, arg: TypeId, index: usize) -> bool {
-        match (self.types.get(func), self.types.get_concrete(arg)) {
+        match (self.types.get(func), self.types.get(arg)) {
             // If we don't know either type yet, solving is impossible.
-            (Type::Unknown(_), ConcreteType::Unknown(_)) => false,
+            (Type::Unknown(_), Type::Unknown(_)) => false,
             // If the function has too few inputs, solving is impossible.
             (Type::Function { inputs, .. }, _) if inputs.len() <= index => false,
             (Type::Function { inputs, .. }, _) => self.unify(inputs[index], arg),
-            (Type::Forall(_, _), _) => false,
             (_a, _b) => false,
         }
     }
@@ -352,16 +409,24 @@ impl TypecheckContext {
                 Type::Function {
                     inputs: inputs1,
                     output: output1,
+                    effects: effects1,
                 },
                 Type::Function {
                     inputs: inputs2,
                     output: output2,
+                    effects: effects2,
                 },
             ) => {
                 if inputs1.len() != inputs2.len() {
                     return false;
                 }
 
+                if effects1 != effects2 {
+                    println!("{effects1:?} != {effects2:?}");
+                    return false;
+                }
+
+                // TODO: See if this can bw done without creating new constraints.
                 let mut extend = self.extend.borrow_mut();
                 for (a, b) in zip(inputs1, inputs2) {
                     extend.push(Constraint::Equal(a, b));
@@ -387,7 +452,7 @@ impl TypecheckContext {
 
     fn rewrite_type_parameter(&self, param: u32, replace_with: TypeId, ty: TypeId) {
         match self.types.get(ty) {
-            Type::Function { inputs, output } => {
+            Type::Function { inputs, output, .. } => {
                 for input in inputs {
                     self.rewrite_type_parameter(param, replace_with, input);
                 }
@@ -534,9 +599,10 @@ impl HlirVisitorImmut for TypecheckContext {
                 VisitAction::Recurse
             }
             NodeKind::Resume { arg } => {
-                match self.resume_type {
-                    Some(ty) => self.constraints.push(Equal(arg.ty, ty)),
-                    None => unreachable!(),
+                match (self.resume_type, arg) {
+                    (Some(ty), Some(arg)) => self.constraints.push(Equal(arg.ty, ty)),
+                    (Some(ty), None) => self.constraints.push(Equal(self.types.unit(), ty)),
+                    (None, _) => unreachable!(),
                 }
                 VisitAction::Recurse
             }
