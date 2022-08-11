@@ -142,7 +142,7 @@ fn environment_function_effects() {
           print("done!");
         }
 
-        fn give_numbers(func: () -> unit, max) {
+        fn give_numbers(func: () -> unit with foo, max) {
           let count = 0;
           handle foo get_number() {
             count = count + 1;
@@ -152,7 +152,7 @@ fn environment_function_effects() {
           func();
         }
 
-        fn wow() {
+        fn wow() with foo {
           while (true) {
             let num = get_number();
             print_int(num);

@@ -273,6 +273,7 @@ impl HlirBuilder {
     }
 
     fn read_top_level_effect_group(&mut self, group: ast::EffectGroup, module: &mut Module) {
+        let group_id = EffectGroupId(inc!(self.effect_group_id_counter));
         let mut effects = Vec::new();
         for def in group.effects {
             let arguments: Vec<_> = def
@@ -289,7 +290,7 @@ impl HlirBuilder {
             let ty = self.hlir.types.insert(Type::Function {
                 inputs: arguments.iter().map(|x| x.ty).collect(),
                 output,
-                effects: EffectSet::default(),
+                effects: EffectSet::new(vec![group_id], false),
             });
 
             let header = EffectHeader {
@@ -307,7 +308,7 @@ impl HlirBuilder {
             effects.push(effect);
         }
         let group = EffectGroup {
-            id: EffectGroupId(inc!(self.effect_group_id_counter)),
+            id: group_id,
             name: group.name,
             effects,
         };
@@ -334,6 +335,7 @@ impl HlirBuilder {
                 output: self.typeproto_to_type(return_ty, generics, unknown_is_unit),
                 effects: EffectSet::Unsolved {
                     names: effects.effects.clone(),
+                    open: false,
                 },
             }),
             TypeProto::Name(key) => match generics.iter().position(|x| x.name == *key) {
@@ -364,6 +366,7 @@ impl HlirBuilder {
             output,
             effects: EffectSet::Unsolved {
                 names: def.effects.effects,
+                open: false,
             },
         });
         for (id, _generic) in def.generics.iter().enumerate().rev() {

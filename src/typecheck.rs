@@ -21,8 +21,14 @@ pub struct TypeId(pub usize);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum EffectSet {
-    Solved { effects: Rc<Vec<EffectGroupId>> },
-    Unsolved { names: Vec<Spur> },
+    Solved {
+        effects: Rc<Vec<EffectGroupId>>,
+        open: bool,
+    },
+    Unsolved {
+        names: Vec<Spur>,
+        open: bool,
+    },
 }
 
 /// A type representing all possible types.
@@ -102,34 +108,74 @@ impl Default for EffectSet {
     fn default() -> Self {
         Self::Solved {
             effects: Default::default(),
+            open: true,
         }
     }
 }
 
 impl EffectSet {
     /// Produce a new EffectSet out of known effects.
-    pub fn new(mut effects: Vec<EffectGroupId>) -> Self {
+    pub fn new(mut effects: Vec<EffectGroupId>, open: bool) -> Self {
         effects.sort_unstable();
         effects.dedup();
         Self::Solved {
             effects: effects.into(),
+            open,
         }
     }
 
     /// Produce a new EffectSet as a set join of two EffectSets.
-    fn join(&self, other: &EffectSet) -> Self {
-        let mut vec = self.assume_solved().clone();
-        vec.extend_from_slice(&other.assume_solved());
+    /// This will return `None` if self is closed and the joined set isn't equal to self.
+    fn join(&self, other: &EffectSet) -> Option<Self> {
+        let (vec1, open1) = self.assume_solved();
+        let (vec2, _) = other.assume_solved();
+
+        let mut vec = vec1.clone();
+        vec.extend_from_slice(&vec2);
         vec.sort_unstable();
         vec.dedup();
+
+        if !open1 && &vec != vec1 {
+            return None;
+        }
+
+        Some(Self::Solved {
+            effects: vec.into(),
+            open: open1,
+        })
+    }
+
+    fn remove(&self, items: &[EffectGroupId]) -> Self {
+        let (vec1, open1) = self.assume_solved();
+
+        let vec: Vec<_> = vec1
+            .iter()
+            .copied()
+            .filter(|x| !items.contains(x))
+            .collect();
+
         Self::Solved {
             effects: vec.into(),
+            open: open1,
         }
     }
 
-    fn assume_solved(&self) -> &Vec<EffectGroupId> {
+    /// Return true if `self` is a strict superset of `other`.
+    fn is_superset(&self, other: &EffectSet) -> bool {
+        let (vec1, _) = self.assume_solved();
+        let (vec2, _) = other.assume_solved();
+
+        for item in vec2 {
+            if !vec1.contains(item) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn assume_solved(&self) -> (&Vec<EffectGroupId>, bool) {
         match self {
-            EffectSet::Solved { effects } => effects,
+            EffectSet::Solved { effects, open } => (effects, *open),
             EffectSet::Unsolved { .. } => unreachable!("EffectSet::assume_solved not solved"),
         }
     }
@@ -187,6 +233,16 @@ impl TypeStore {
                 .expect("TypeStore::get on unknown TypeId");
         }
         ty.clone()
+    }
+
+    pub fn walk_forall(&self, id: TypeId) -> Type {
+        let mut ty = self.get(id);
+        loop {
+            match ty {
+                Type::Forall(_, id) => ty = self.get(id),
+                x => return x,
+            }
+        }
     }
 
     pub fn get_concrete(&self, id: TypeId) -> ConcreteType {
@@ -274,7 +330,7 @@ impl TypeStore {
 }
 
 /// Represents a type constraint. Used by [`TypecheckContext::apply_constraints()`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Constraint {
     /// The two types must be equal.
     Equal(TypeId, TypeId),
@@ -287,7 +343,9 @@ pub enum Constraint {
     /// The return type of function is result.
     ResultOf(TypeId, TypeId),
     /// The type can be called with N arguments..
-    Call(TypeId, usize),
+    /// Provides negative effect space, ie. effect groups this call is allowed to use in addition
+    /// to the surrounding function.
+    Call(TypeId, usize, Vec<EffectGroupId>),
     Apply(TypeId, TypeId),
 }
 
@@ -307,6 +365,10 @@ pub struct TypecheckContext {
     return_type: TypeId,
     extend: RefCell<Vec<Constraint>>,
     late_instantiate: bool,
+    function_ty: TypeId,
+
+    negative_effect_space: Vec<EffectGroupId>,
+
     pub errors: Vec<Error>,
 }
 
@@ -319,9 +381,9 @@ impl TypecheckContext {
     pub fn apply_constraints(&mut self) {
         while !self.constraints.is_empty() {
             let mut applied = HashSet::new();
-            for &constraint in &self.constraints {
+            for constraint in &self.constraints {
                 if self.solve_constraint(constraint) {
-                    applied.insert(constraint);
+                    applied.insert(constraint.clone());
                 }
             }
 
@@ -344,10 +406,10 @@ impl TypecheckContext {
     }
 
     /// Attempts to solve a constraint. Returns true if the constraint was solved.
-    fn solve_constraint(&self, constraint: Constraint) -> bool {
+    fn solve_constraint(&self, constraint: &Constraint) -> bool {
         match constraint {
-            Constraint::Equal(a, b) => self.unify(a, b),
-            Constraint::LeftEqual(a, b) => {
+            &Constraint::Equal(a, b) => self.unify(a, b),
+            &Constraint::LeftEqual(a, b) => {
                 match (self.types.get_concrete(a), self.types.get_concrete(b)) {
                     (ConcreteType::Unknown(_), x) => {
                         self.types.replace(a, self.types.insert_concrete(x));
@@ -357,8 +419,8 @@ impl TypecheckContext {
                     (_, _) => false,
                 }
             }
-            Constraint::ArgumentOf(func, arg, index) => self.solve_argumentof(func, arg, index),
-            Constraint::ResultOf(func, res) => {
+            &Constraint::ArgumentOf(func, arg, index) => self.solve_argumentof(func, arg, index),
+            &Constraint::ResultOf(func, res) => {
                 match (self.types.get(func), self.types.get(res)) {
                     // If we don't know either type yet, solving is impossible.
                     (Type::Unknown(_), Type::Unknown(_)) => false,
@@ -366,12 +428,8 @@ impl TypecheckContext {
                     (_a, _b) => false,
                 }
             }
-            Constraint::Call(func, count) => match self.types.get(func) {
-                Type::Forall(_, _) => unreachable!(),
-                Type::Function { inputs, .. } => inputs.len() == count,
-                _ => false,
-            },
-            Constraint::Apply(forall, replace_with) => match self.types.get(forall) {
+            Constraint::Call(func, count, negative) => self.solve_call(*func, *count, negative),
+            &Constraint::Apply(forall, replace_with) => match self.types.get(forall) {
                 Type::Unknown(_) => false,
                 Type::Forall(param, _) => {
                     self.rewrite_type_parameter(param, replace_with, forall);
@@ -380,6 +438,27 @@ impl TypecheckContext {
                 Type::Parameter(_) => todo!(),
                 _ => false,
             },
+        }
+    }
+
+    fn solve_call(&self, func: TypeId, count: usize, negative: &[EffectGroupId]) -> bool {
+        match self.types.get(func) {
+            Type::Forall(_, _) => unreachable!(),
+            Type::Function {
+                inputs, effects, ..
+            } => {
+                if inputs.len() != count {
+                    return false;
+                }
+
+                let out_eff = match self.types.walk_forall(self.function_ty) {
+                    Type::Function { effects, .. } => effects,
+                    _ => unreachable!(),
+                };
+
+                out_eff.is_superset(&effects.remove(negative))
+            }
+            _ => false,
         }
     }
 
@@ -422,7 +501,6 @@ impl TypecheckContext {
                 }
 
                 if effects1 != effects2 {
-                    println!("{effects1:?} != {effects2:?}");
                     return false;
                 }
 
@@ -509,6 +587,7 @@ impl HlirVisitorImmut for TypecheckContext {
 
     fn visit_function(&mut self, function: &FnDef) -> VisitAction {
         self.return_type = function.return_ty;
+        self.function_ty = function.header.ty;
         for arg in &function.arguments {
             self.names.push((arg.name, arg.ty));
         }
@@ -554,7 +633,9 @@ impl HlirVisitorImmut for TypecheckContext {
                         self.names.pop();
                     }
                 }
+                self.negative_effect_space.push(*group_id);
                 self.walk_node(expr);
+                self.negative_effect_space.pop();
                 VisitAction::Nothing
             }
             NodeKind::Let { name, value, expr } => {
@@ -595,7 +676,11 @@ impl HlirVisitorImmut for TypecheckContext {
                     self.constraints.push(ArgumentOf(callee.ty, arg.ty, idx));
                 }
                 self.constraints.push(ResultOf(callee.ty, node.ty));
-                self.constraints.push(Call(callee.ty, args.len()));
+                self.constraints.push(Call(
+                    callee.ty,
+                    args.len(),
+                    self.negative_effect_space.clone(),
+                ));
                 VisitAction::Recurse
             }
             NodeKind::Resume { arg } => {

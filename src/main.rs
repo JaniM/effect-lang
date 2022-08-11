@@ -56,13 +56,8 @@ macro_rules! inc {
 fn main() {
     let source = unindent(
         r#"
-        effect foo {
-          fn get_number() -> int;
-        }
-
-        effect io {
-          fn print_(text: int);
-        }
+        effect foo { fn get_number() -> int; }
+        effect io { fn print_(num: int); }
 
         fn main() {
           handle io print_(text) { print_int(text); resume(); }
@@ -70,7 +65,7 @@ fn main() {
           print("done!");
         }
 
-        fn give_numbers(func: () -> unit with foo+io, max) {
+        fn give_numbers(func: () -> unit with foo + io, max) with io {
           let count = 0;
           handle foo get_number() {
             count = count + 1;
@@ -80,7 +75,7 @@ fn main() {
           func();
         }
 
-        fn wow() -> unit with foo+io {
+        fn wow() -> unit with foo + io {
           while (true) {
             let num = get_number();
             print_(num);

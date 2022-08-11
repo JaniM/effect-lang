@@ -37,7 +37,7 @@ impl NameResolver {
             } => {
                 let module = self.index.modules.get(&self.module).unwrap();
                 let new_effects = match effects {
-                    EffectSet::Unsolved { names } => {
+                    EffectSet::Unsolved { names, open } => {
                         let mut effects = vec![];
                         for name in names {
                             match module.names.get(&name) {
@@ -45,7 +45,7 @@ impl NameResolver {
                                 _ => todo!(),
                             }
                         }
-                        EffectSet::new(effects)
+                        EffectSet::new(effects, open)
                     }
                     x => x,
                 };
