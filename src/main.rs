@@ -1,8 +1,10 @@
 #![feature(box_patterns)]
 #![feature(int_log)]
 #![feature(generic_arg_infer)]
+#![feature(type_alias_impl_trait)]
 
 mod bytecode;
+mod error_report;
 mod hlir;
 mod intern;
 mod interpreter;
@@ -10,13 +12,17 @@ mod lexer;
 mod parser;
 mod typecheck;
 
+use std::collections::HashMap;
+
 use crate::{
     bytecode::{
         optimize::simplify_function, program::Program, Function, FunctionBuilder,
         FunctionBuilderCtx,
     },
+    error_report::ErrorContext,
     hlir::{name_resolve::NameResolver, pretty::PrettyPrint, simplify::Simplifier, HlirBuilder},
     hlir::{pretty::print_fragments, visitor::HlirVisitor, FileId},
+    intern::INTERNER,
     interpreter::{
         standard::{load_standard_builtins, StandardPorts},
         Interpreter,
@@ -56,16 +62,16 @@ macro_rules! inc {
 fn main() {
     let source = unindent(
         r#"
-        effect foo { fn get_number() -> int; }
-        effect io { fn print_(num: int); }
+        effect foo {
+          fn get_number() -> int;
+        }
 
         fn main() {
-          handle io print_(text) { print_int(text); resume(); }
           give_numbers(wow, 5);
           print("done!");
         }
 
-        fn give_numbers(func: () -> unit with foo + io, max) with io {
+        fn give_numbers(func: () -> unit with foo, max) {
           let count = 0;
           handle foo get_number() {
             count = count + 1;
@@ -75,21 +81,22 @@ fn main() {
           func();
         }
 
-        fn wow() -> unit with foo + io {
+        fn wow() with foo {
           while (true) {
             let num = get_number();
-            print_(num);
+            print_int(num);
           }
         }
         "#,
     );
 
     println!("Source:\n{}\n", source);
+    let fileid = FileId(INTERNER.get_or_intern_static("<main>"));
 
     let ast = parse(&source).unwrap();
 
     let mut builder = HlirBuilder::default();
-    builder.read_module(FileId(0), ast).unwrap();
+    builder.read_module(fileid, ast).unwrap();
     builder.load_builtins(|l| load_standard_builtins::<StandardPorts>(l));
     let mut hlir = builder.hlir;
 
@@ -100,17 +107,23 @@ fn main() {
     typecheck.walk_hlir(&mut hlir);
     typecheck.apply_constraints();
 
-    {
-        let mut pretty = PrettyPrint::new();
-        pretty.walk_hlir(&mut hlir);
-        println!("HIR:");
-        print_fragments(&pretty.fragments);
-        println!();
+    // {
+    //     let mut pretty = PrettyPrint::new();
+    //     pretty.walk_hlir(&mut hlir);
+    //     println!("HIR:");
+    //     print_fragments(&pretty.fragments);
+    //     println!();
+    // }
+
+    let mut error_ctx =
+        ErrorContext::new(HashMap::from([(fileid, source)]), hlir.construct_index());
+    for error in &typecheck.errors {
+        // println!("{:?}", error);
+        error_ctx.report_type_error(&error);
     }
 
-    for error in typecheck.errors {
-        println!("{:?}", error);
-        panic!();
+    if typecheck.errors.len() > 0 {
+        return;
     }
 
     report_unknown_types(&mut hlir);
@@ -125,8 +138,8 @@ fn main() {
     }
 
     let program = Program::from_hlir(&hlir);
-    println!("\nBytecode: ");
-    program.print();
+    // println!("\nBytecode: ");
+    // program.print();
 
     let mut interpreter = Interpreter::<StandardPorts>::new(program).with_stdout(std::io::stdout());
     load_standard_builtins(&mut interpreter);

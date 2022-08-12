@@ -63,12 +63,13 @@ impl NameResolver {
                 );
             }
             Type::Name(key) => {
+                let span = self.types.get_span(id);
                 let name = resolve_symbol(key);
                 let ty = match name {
-                    "int" => self.types.int(),
-                    "string" => self.types.string(),
-                    "unit" => self.types.unit(),
-                    "_" => self.types.unknown_type(),
+                    "int" => self.types.int(span),
+                    "string" => self.types.string(span),
+                    "unit" => self.types.unit(span),
+                    "_" => self.types.unknown_type(span),
                     _ => id,
                 };
                 self.types.replace(id, ty);
@@ -129,7 +130,9 @@ impl HlirVisitor for NameResolver {
 
     fn visit_node(&mut self, node: &mut super::Node) -> VisitAction {
         let out = match &mut node.kind {
-            NodeKind::Let { name, value, expr } => {
+            NodeKind::Let {
+                name, value, expr, ..
+            } => {
                 self.walk_node(value);
 
                 self.names.push(*name);
@@ -157,7 +160,7 @@ impl HlirVisitor for NameResolver {
                     node.ty = b.ty;
                 } else if name == INTERNER.get_or_intern_static("true") {
                     node.kind = NodeKind::Literal(Literal::Bool(true));
-                    node.ty = self.types.bool();
+                    node.ty = self.types.bool(node.source_span);
                 }
                 VisitAction::Recurse
             }
@@ -166,8 +169,9 @@ impl HlirVisitor for NameResolver {
                     &NodeKind::Name(name) if name == INTERNER.get_or_intern_static("resume") => {
                         assert!(args.len() <= 1);
                         let arg = args.pop().map(Box::new);
+                        let span = callee.source_span;
                         node.kind = NodeKind::Resume { arg };
-                        node.ty = self.types.unit();
+                        node.ty = self.types.unit(span);
                     }
                     _ => {}
                 }

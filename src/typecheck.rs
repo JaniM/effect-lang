@@ -1,336 +1,23 @@
 mod test;
+pub mod typestore;
 
-use std::{cell::RefCell, collections::HashSet, iter::zip, rc::Rc};
+use std::{cell::RefCell, collections::HashSet, iter::zip};
 
 use lasso::Spur;
-use tinyvec::TinyVec;
 
 use crate::{
     hlir::{
         index::{Header, Index},
         visitor::{HlirVisitorImmut, VisitAction},
-        EffectGroupId, FnDef, Hlir, Literal, Module, ModuleId, Node, NodeKind,
+        EffectGroupId, FnDef, Hlir, Literal, Module, ModuleId, Node, NodeKind, Span,
     },
-    inc,
     parser::BinopKind,
 };
 
-/// An opaque id used with [TypeStore].
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub struct TypeId(pub usize);
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum EffectSet {
-    Solved {
-        effects: Rc<Vec<EffectGroupId>>,
-        open: bool,
-    },
-    Unsolved {
-        names: Vec<Spur>,
-        open: bool,
-    },
-}
-
-/// A type representing all possible types.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Type {
-    Ref(TypeId),
-    /// The type of this node is currently unknown. Used as a type inference point.
-    Unknown(u32),
-    /// A currently unresolved type name.
-    Name(Spur),
-    Function {
-        inputs: TinyVec<[TypeId; 4]>,
-        output: TypeId,
-        effects: EffectSet,
-    },
-    /// The type is valid for all types represented by the parameter.
-    Forall(u32, TypeId),
-    /// A type parameter referring to some Forall
-    Parameter(u32),
-    String,
-    Int,
-    Bool,
-    Unit,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum ConcreteType {
-    /// The type of this node is currently unknown. Used as a type inference point.
-    Unknown(u32),
-    /// A currently unresolved type name.
-    Name(Spur),
-    Function {
-        inputs: Vec<ConcreteType>,
-        output: Box<ConcreteType>,
-        effects: EffectSet,
-    },
-    /// The type is valid for all types represented by the parameter.
-    Forall(u32, Box<ConcreteType>),
-    /// A type parameter referring to some Forall
-    Parameter(u32),
-    String,
-    Int,
-    Bool,
-    Unit,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct TypeStoreInternal {
-    types: Vec<Type>,
-    unknowns: usize,
-}
-
-impl TypeStoreInternal {
-    const UNIT: TypeId = TypeId(0);
-    const INT: TypeId = TypeId(1);
-    const STRING: TypeId = TypeId(2);
-    const BOOL: TypeId = TypeId(3);
-}
-
-impl Default for TypeStoreInternal {
-    fn default() -> Self {
-        Self {
-            types: vec![Type::Unit, Type::Int, Type::String, Type::Bool],
-            unknowns: Default::default(),
-        }
-    }
-}
-
-/// Stores types in an opaque, easily modifiable/queryable way. Produces a [TypeId] for each
-/// inserted type.
-///
-/// It is generally expected that a [Node]'s [TypeId] is *never* changed.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct TypeStore(Rc<RefCell<TypeStoreInternal>>);
-
-impl Default for EffectSet {
-    fn default() -> Self {
-        Self::Solved {
-            effects: Default::default(),
-            open: true,
-        }
-    }
-}
-
-impl EffectSet {
-    /// Produce a new EffectSet out of known effects.
-    pub fn new(mut effects: Vec<EffectGroupId>, open: bool) -> Self {
-        effects.sort_unstable();
-        effects.dedup();
-        Self::Solved {
-            effects: effects.into(),
-            open,
-        }
-    }
-
-    /// Produce a new EffectSet as a set join of two EffectSets.
-    /// This will return `None` if self is closed and the joined set isn't equal to self.
-    fn join(&self, other: &EffectSet) -> Option<Self> {
-        let (vec1, open1) = self.assume_solved();
-        let (vec2, _) = other.assume_solved();
-
-        let mut vec = vec1.clone();
-        vec.extend_from_slice(&vec2);
-        vec.sort_unstable();
-        vec.dedup();
-
-        if !open1 && &vec != vec1 {
-            return None;
-        }
-
-        Some(Self::Solved {
-            effects: vec.into(),
-            open: open1,
-        })
-    }
-
-    fn remove(&self, items: &[EffectGroupId]) -> Self {
-        let (vec1, open1) = self.assume_solved();
-
-        let vec: Vec<_> = vec1
-            .iter()
-            .copied()
-            .filter(|x| !items.contains(x))
-            .collect();
-
-        Self::Solved {
-            effects: vec.into(),
-            open: open1,
-        }
-    }
-
-    /// Return true if `self` is a strict superset of `other`.
-    fn is_superset(&self, other: &EffectSet) -> bool {
-        let (vec1, _) = self.assume_solved();
-        let (vec2, _) = other.assume_solved();
-
-        for item in vec2 {
-            if !vec1.contains(item) {
-                return false;
-            }
-        }
-        true
-    }
-
-    fn assume_solved(&self) -> (&Vec<EffectGroupId>, bool) {
-        match self {
-            EffectSet::Solved { effects, open } => (effects, *open),
-            EffectSet::Unsolved { .. } => unreachable!("EffectSet::assume_solved not solved"),
-        }
-    }
-}
-
-impl TypeStore {
-    /// Get a deduplicated unit type.
-    pub fn unit(&self) -> TypeId {
-        TypeStoreInternal::UNIT
-    }
-
-    /// Get a deduplicated boolean type.
-    pub fn bool(&self) -> TypeId {
-        TypeStoreInternal::BOOL
-    }
-
-    /// Get a deduplicated integer type.
-    pub fn int(&self) -> TypeId {
-        TypeStoreInternal::INT
-    }
-
-    /// Get a deduplicated string type.
-    pub fn string(&self) -> TypeId {
-        TypeStoreInternal::STRING
-    }
-
-    /// Get a new unknown type. This will always be unique. Used to produce a type inference point
-    /// in the [Hlir] tree.
-    pub fn unknown_type(&self) -> TypeId {
-        let id = {
-            let mut store = self.0.borrow_mut();
-            inc!(store.unknowns) as u32
-        };
-        self.insert(Type::Unknown(id))
-    }
-
-    /// Inserts a new type to the store.
-    pub fn insert(&self, ty: Type) -> TypeId {
-        let mut store = self.0.borrow_mut();
-
-        let id = TypeId(store.types.len());
-        store.types.push(ty);
-        id
-    }
-
-    /// Get a type from the store. Clones the type, so modifying it directly will have no effect.
-    /// Use [`Self::replace()`] to update it.
-    pub fn get(&self, id: TypeId) -> Type {
-        let store = self.0.borrow();
-        let mut ty = &Type::Ref(id);
-        while let Type::Ref(id) = ty {
-            ty = store
-                .types
-                .get(id.0)
-                .expect("TypeStore::get on unknown TypeId");
-        }
-        ty.clone()
-    }
-
-    pub fn walk_forall(&self, id: TypeId) -> Type {
-        let mut ty = self.get(id);
-        loop {
-            match ty {
-                Type::Forall(_, id) => ty = self.get(id),
-                x => return x,
-            }
-        }
-    }
-
-    pub fn get_concrete(&self, id: TypeId) -> ConcreteType {
-        match self.get(id) {
-            Type::Ref(id) => self.get_concrete(id),
-            Type::Function {
-                inputs,
-                output,
-                effects,
-            } => ConcreteType::Function {
-                inputs: inputs.into_iter().map(|x| self.get_concrete(x)).collect(),
-                output: self.get_concrete(output).into(),
-                effects,
-            },
-            Type::Forall(x, id) => ConcreteType::Forall(x, self.get_concrete(id).into()),
-            Type::Parameter(x) => ConcreteType::Parameter(x),
-            Type::Unknown(x) => ConcreteType::Unknown(x),
-            Type::Name(x) => ConcreteType::Name(x),
-            Type::String => ConcreteType::String,
-            Type::Int => ConcreteType::Int,
-            Type::Bool => ConcreteType::Bool,
-            Type::Unit => ConcreteType::Unit,
-        }
-    }
-
-    #[allow(unused)]
-    pub fn insert_concrete(&self, ty: ConcreteType) -> TypeId {
-        match ty {
-            ConcreteType::Function {
-                inputs,
-                output,
-                effects,
-            } => self.insert(Type::Function {
-                inputs: inputs
-                    .into_iter()
-                    .map(|x| self.insert_concrete(x))
-                    .collect(),
-                output: self.insert_concrete(*output),
-                effects,
-            }),
-            ConcreteType::Forall(x, t) => self.insert(Type::Forall(x, self.insert_concrete(*t))),
-            ConcreteType::Parameter(x) => self.insert(Type::Parameter(x)),
-            ConcreteType::Unknown(x) => self.insert(Type::Unknown(x)),
-            ConcreteType::Name(x) => self.insert(Type::Name(x)),
-            ConcreteType::String => self.insert(Type::String),
-            ConcreteType::Int => self.insert(Type::Int),
-            ConcreteType::Bool => self.insert(Type::Bool),
-            ConcreteType::Unit => self.insert(Type::Unit),
-        }
-    }
-
-    /// Replaces the type `id` refers to.
-    pub fn replace(&self, id: TypeId, ty: TypeId) {
-        if id == ty {
-            return;
-        }
-        let mut store = self.0.borrow_mut();
-        store.types[id.0] = Type::Ref(ty);
-    }
-
-    /// Rewrites the referred type.
-    pub fn rewrite(&self, mut id: TypeId, new_ty: Type) {
-        let mut store = self.0.borrow_mut();
-        loop {
-            match store.types[id.0] {
-                Type::Ref(new_id) => id = new_id,
-                _ => break,
-            }
-        }
-        store.types[id.0] = new_ty;
-    }
-
-    fn type_is_solvwd(&self, id: TypeId) -> bool {
-        match self.get(id) {
-            Type::Unknown(_) => false,
-            Type::Name(_) => false,
-            Type::Function { inputs, output, .. } => {
-                !(inputs.into_iter().any(|x| !self.type_is_solvwd(x))
-                    || !self.type_is_solvwd(output))
-            }
-            Type::Forall(_, x) => self.type_is_solvwd(x),
-            _ => true,
-        }
-    }
-}
+pub use typestore::*;
 
 /// Represents a type constraint. Used by [`TypecheckContext::apply_constraints()`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Constraint {
     /// The two types must be equal.
     Equal(TypeId, TypeId),
@@ -380,6 +67,7 @@ impl TypecheckContext {
     /// Apply all known constraints.
     pub fn apply_constraints(&mut self) {
         while !self.constraints.is_empty() {
+            self.constraints.sort();
             let mut applied = HashSet::new();
             for constraint in &self.constraints {
                 if self.solve_constraint(constraint) {
@@ -412,7 +100,8 @@ impl TypecheckContext {
             &Constraint::LeftEqual(a, b) => {
                 match (self.types.get_concrete(a), self.types.get_concrete(b)) {
                     (ConcreteType::Unknown(_), x) => {
-                        self.types.replace(a, self.types.insert_concrete(x));
+                        self.types
+                            .replace(a, self.types.insert_concrete(x, self.types.get_span(b)));
                         true
                     }
                     (a, b) if a == b => true,
@@ -476,12 +165,12 @@ impl TypecheckContext {
     fn unify(&self, a: TypeId, b: TypeId) -> bool {
         match (self.types.get(a), self.types.get(b)) {
             (Type::Unknown(_), Type::Unknown(_)) => false,
-            (Type::Unknown(_), ty) => {
-                self.types.rewrite(a, ty);
+            (Type::Unknown(_), _) => {
+                self.types.replace_deep(a, b);
                 true
             }
-            (ty, Type::Unknown(_)) => {
-                self.types.rewrite(b, ty);
+            (_, Type::Unknown(_)) => {
+                self.types.replace_deep(b, a);
                 true
             }
             (
@@ -517,11 +206,11 @@ impl TypecheckContext {
         }
     }
 
-    fn instantiate_fn(&self, id: TypeId) {
+    fn instantiate_fn(&self, id: TypeId, span: Span) {
         loop {
             match self.types.get(id) {
                 Type::Forall(param, _) => {
-                    self.rewrite_type_parameter(param, self.types.unknown_type(), id);
+                    self.rewrite_type_parameter(param, self.types.unknown_type(span), id);
                 }
                 _ => break,
             }
@@ -638,9 +327,15 @@ impl HlirVisitorImmut for TypecheckContext {
                 self.negative_effect_space.pop();
                 VisitAction::Nothing
             }
-            NodeKind::Let { name, value, expr } => {
+            NodeKind::Let {
+                name,
+                name_span,
+                value,
+                expr,
+            } => {
                 self.walk_node(value);
-                self.names.push((*name, value.ty));
+                let lhs_ty = self.types.insert(Type::Ref(value.ty), *name_span);
+                self.names.push((*name, lhs_ty));
                 self.walk_node(expr);
                 self.names.pop();
 
@@ -663,7 +358,8 @@ impl HlirVisitorImmut for TypecheckContext {
                 self.constraints.push(Equal(left.ty, right.ty));
                 match op {
                     BinopKind::Equals | BinopKind::Less | BinopKind::Greater => {
-                        self.constraints.push(Equal(node.ty, self.types.bool()));
+                        self.constraints
+                            .push(Equal(node.ty, self.types.bool(node.source_span)));
                     }
                     BinopKind::Add => {
                         self.constraints.push(Equal(node.ty, left.ty));
@@ -686,25 +382,29 @@ impl HlirVisitorImmut for TypecheckContext {
             NodeKind::Resume { arg } => {
                 match (self.resume_type, arg) {
                     (Some(ty), Some(arg)) => self.constraints.push(Equal(arg.ty, ty)),
-                    (Some(ty), None) => self.constraints.push(Equal(self.types.unit(), ty)),
+                    (Some(ty), None) => self
+                        .constraints
+                        .push(Equal(self.types.unit(node.source_span), ty)),
                     (None, _) => unreachable!(),
                 }
                 VisitAction::Recurse
             }
             NodeKind::If { cond, .. } => {
-                self.constraints.push(Equal(cond.ty, self.types.bool()));
+                self.constraints
+                    .push(Equal(cond.ty, self.types.bool(node.source_span)));
                 VisitAction::Recurse
             }
             NodeKind::While { cond, .. } => {
-                self.constraints.push(Equal(cond.ty, self.types.bool()));
+                self.constraints
+                    .push(Equal(cond.ty, self.types.bool(node.source_span)));
                 VisitAction::Recurse
             }
             NodeKind::Block(_) => VisitAction::Recurse,
             NodeKind::Literal(lit) => {
                 let ty = match lit {
-                    Literal::String(_) => self.types.string(),
-                    Literal::Int(_) => self.types.int(),
-                    Literal::Bool(_) => self.types.bool(),
+                    Literal::String(_) => self.types.string(node.source_span),
+                    Literal::Int(_) => self.types.int(node.source_span),
+                    Literal::Bool(_) => self.types.bool(node.source_span),
                 };
                 self.constraints.push(Equal(node.ty, ty));
                 VisitAction::Recurse
@@ -728,12 +428,14 @@ impl HlirVisitorImmut for TypecheckContext {
                     Header::Fn(header) => header.ty,
                     Header::Effect(header) => header.ty,
                 };
+                let span = self.types.get_span(ty);
                 self.types.replace(
                     node.ty,
-                    self.types.insert_concrete(self.types.get_concrete(ty)),
+                    self.types
+                        .insert_concrete(self.types.get_concrete(ty), span),
                 );
                 if !self.late_instantiate {
-                    self.instantiate_fn(node.ty);
+                    self.instantiate_fn(node.ty, node.source_span);
                 }
                 VisitAction::Recurse
             }

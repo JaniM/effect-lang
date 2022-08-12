@@ -4,6 +4,7 @@ use tinyvec::tiny_vec;
 
 use crate::{
     bytecode::Value,
+    hlir::Span,
     typecheck::{EffectSet, TypeStore},
     typecheck::{Type, TypeId},
 };
@@ -27,7 +28,7 @@ impl Extract for Rc<String> {
     }
 
     fn extract_type(types: &TypeStore) -> TypeId {
-        types.string()
+        types.string(Span::default())
     }
 }
 
@@ -43,7 +44,7 @@ impl Extract for i64 {
     }
 
     fn extract_type(types: &TypeStore) -> TypeId {
-        types.int()
+        types.int(Span::default())
     }
 }
 
@@ -67,11 +68,14 @@ where
     }
 
     fn extract_type(&self, types: &TypeStore) -> TypeId {
-        types.insert(Type::Function {
-            inputs: tiny_vec![],
-            output: types.unit(),
-            effects: EffectSet::default(),
-        })
+        types.insert(
+            Type::Function {
+                inputs: tiny_vec![],
+                output: types.unit(Span::default()),
+                effects: EffectSet::default(),
+            },
+            Span::default(),
+        )
     }
 }
 
@@ -91,11 +95,14 @@ where
     }
 
     fn extract_type(&self, types: &TypeStore) -> TypeId {
-        types.insert(Type::Function {
-            inputs: tiny_vec![[_; _] => A::extract_type(types)],
-            output: types.unit(),
-            effects: EffectSet::default(),
-        })
+        types.insert(
+            Type::Function {
+                inputs: tiny_vec![[_; _] => A::extract_type(types)],
+                output: types.unit(Span::default()),
+                effects: EffectSet::default(),
+            },
+            Span::default(),
+        )
     }
 }
 

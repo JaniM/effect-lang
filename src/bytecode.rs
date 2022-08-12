@@ -311,7 +311,9 @@ impl HlirVisitorImmut for FunctionBuilder<'_, usize> {
 
     fn visit_node(&mut self, node: &Node) -> VisitAction {
         match &node.kind {
-            NodeKind::Let { name, value, expr } => {
+            NodeKind::Let {
+                name, value, expr, ..
+            } => {
                 let reg = self.next_reg();
                 self.walk_with_out(reg, value);
 
@@ -657,7 +659,7 @@ mod test {
         let ast = parse(&source).unwrap();
 
         let mut builder = HlirBuilder::default();
-        builder.read_module(FileId(0), ast).unwrap();
+        builder.read_module(FileId(Spur::default()), ast).unwrap();
 
         builder.load_builtins(|l| load_standard_builtins::<StandardPorts>(l));
 

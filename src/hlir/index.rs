@@ -3,6 +3,8 @@ use std::{collections::HashMap, rc::Rc};
 use derive_more::From;
 use lasso::Spur;
 
+use crate::typecheck::TypeStore;
+
 use super::{
     Builtins, EffectDef, EffectGroup, EffectGroupId, EffectHeader, FnDef, FnHeader, FunctionId,
     Hlir, ModuleId,
@@ -27,6 +29,7 @@ pub struct ModuleIndex {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Index {
+    pub types: TypeStore,
     pub functions: HashMap<FunctionId, Header>,
     pub effect_groups: HashMap<EffectGroupId, EffectGroup>,
     pub modules: HashMap<ModuleId, ModuleIndex>,
@@ -37,6 +40,7 @@ impl Index {
     pub fn from_hlir(hlir: &Hlir) -> Self {
         let mut index = Index::default();
         index.builtins = hlir.builtins.clone();
+        index.types = hlir.types.clone();
 
         for module in hlir.modules.values() {
             let mut module_index = ModuleIndex::default();

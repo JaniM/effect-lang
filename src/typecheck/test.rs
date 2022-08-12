@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+use lasso::Spur;
+
 use crate::{
     hlir::{
         name_resolve::NameResolver,
@@ -16,7 +18,7 @@ fn typecheck_test(source: &str) -> TypecheckContext {
     let ast = parse(&source).unwrap();
 
     let mut builder = HlirBuilder::default();
-    builder.read_module(FileId(0), ast).unwrap();
+    builder.read_module(FileId(Spur::default()), ast).unwrap();
     let mut hlir = builder.hlir;
 
     Simplifier.walk_hlir(&mut hlir);

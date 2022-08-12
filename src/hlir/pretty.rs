@@ -309,7 +309,9 @@ impl HlirVisitorImmut for PrettyPrint<'_> {
 
                 VisitAction::Nothing
             }
-            NodeKind::Let { name, value, expr } => {
+            NodeKind::Let {
+                name, value, expr, ..
+            } => {
                 self.text("let ");
                 self.text(resolve_symbol(*name));
                 self.text(": ");
@@ -522,6 +524,12 @@ impl HlirVisitorImmut for PrettyPrint<'_> {
 }
 
 pub fn print_fragments(fragments: &[Fragment]) {
+    print!("{}", format_fragments(fragments));
+}
+
+pub fn format_fragments(fragments: &[Fragment]) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
     let max_width = 80;
     let mut indent = 0;
     let mut column = 0;
@@ -532,27 +540,36 @@ pub fn print_fragments(fragments: &[Fragment]) {
                 let len = text.len();
 
                 if column + len > max_width {
-                    println!();
+                    writeln!(out).unwrap();
                     column = 0;
                 }
 
                 if column == 0 && indent > 0 {
                     column += indent as usize;
-                    print!("{}", " ".repeat(indent));
+                    write!(out, "{}", " ".repeat(indent)).unwrap();
                 }
 
                 column += len;
-                print!("{}", text);
+                write!(out, "{}", text).unwrap();
             }
             Fragment::Indent(change) => {
                 indent = (indent as i32 + change).clamp(0, i32::MAX) as usize;
             }
             Fragment::HardBreak => {
                 if column > 0 {
-                    println!();
+                    writeln!(out).unwrap();
                     column = 0;
                 }
             }
         }
     }
+    out
+}
+
+pub fn format_type(index: &Index, ty: TypeId) -> String {
+    let mut printer = PrettyPrint::default();
+    printer.types = index.types.clone();
+    printer.index = index.clone();
+    printer.format_type(&ty);
+    format_fragments(&printer.fragments)
 }

@@ -11,14 +11,14 @@ use lasso::Spur;
 
 use crate::inc;
 use crate::intern::INTERNER;
-use crate::parser::{self as ast, EffectKind, Generic, Spanned};
+use crate::parser::{self as ast, EffectKind, Generic};
 use crate::parser::{BinopKind, TypeProto};
 use crate::typecheck::{EffectSet, Type, TypeId, TypeStore};
 
 use self::index::Index;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub struct FileId(pub usize);
+pub struct FileId(pub Spur);
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Span(pub FileId, pub usize, pub usize);
@@ -26,11 +26,26 @@ pub struct Span(pub FileId, pub usize, pub usize);
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ModuleId(pub usize);
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FunctionId(pub usize);
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EffectGroupId(pub usize);
+
+#[derive(Debug, PartialEq)]
+pub struct Spanned<T>(pub T, pub Span);
+
+impl<T: Clone> Clone for Spanned<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), self.1.clone())
+    }
+}
+
+impl std::fmt::Display for FileId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", INTERNER.resolve(&self.0))
+    }
+}
 
 /// Block is a flat sequence of expressions, evaluated in order.
 #[derive(Clone, Debug, PartialEq)]
@@ -62,6 +77,7 @@ pub struct Handler {
 pub enum NodeKind {
     Let {
         name: Spur,
+        name_span: Span,
         value: Box<Node>,
         expr: Box<Node>,
     },
@@ -254,44 +270,48 @@ impl HlirBuilder {
         module: &mut Module,
         ast::Spanned(node, span): ast::Node,
     ) -> Result<(), HlirBuildError> {
+        let span = Span(module.file, span.start, span.end);
         match node {
             ast::RawNode::FnDef(def) => {
-                self.read_top_level_function(def, module)?;
+                self.read_top_level_function(def, span, module)?;
             }
             ast::RawNode::Effect(group) => {
-                self.read_top_level_effect_group(group, module);
+                self.read_top_level_effect_group(group, span, module);
             }
-            _ => {
-                return Err(HlirBuildError::InvalidTopLevel(Span(
-                    module.file,
-                    span.start,
-                    span.end,
-                )))
-            }
+            _ => return Err(HlirBuildError::InvalidTopLevel(span)),
         }
         Ok(())
     }
 
-    fn read_top_level_effect_group(&mut self, group: ast::EffectGroup, module: &mut Module) {
+    fn read_top_level_effect_group(
+        &mut self,
+        group: ast::EffectGroup,
+        span: Span,
+        module: &mut Module,
+    ) {
         let group_id = EffectGroupId(inc!(self.effect_group_id_counter));
         let mut effects = Vec::new();
-        for def in group.effects {
+        for ast::Spanned(def, span) in group.effects {
+            let span = Span(module.file, span.start, span.end);
             let arguments: Vec<_> = def
                 .args
                 .into_iter()
                 .map(|x| FnArgument {
                     name: x.name,
-                    ty: self.typeproto_to_type(&x.ty, &[], false),
+                    ty: self.typeproto_to_type(&x.ty, &[], module, false),
                 })
                 .collect();
 
-            let output = self.typeproto_to_type(&def.return_ty, &[], true);
+            let output = self.typeproto_to_type(&def.return_ty, &[], module, true);
 
-            let ty = self.hlir.types.insert(Type::Function {
-                inputs: arguments.iter().map(|x| x.ty).collect(),
-                output,
-                effects: EffectSet::new(vec![group_id], false),
-            });
+            let ty = self.hlir.types.insert(
+                Type::Function {
+                    inputs: arguments.iter().map(|x| x.ty).collect(),
+                    output,
+                    effects: EffectSet::new(vec![group_id], false),
+                },
+                span,
+            );
 
             let header = EffectHeader {
                 kind: def.kind,
@@ -317,60 +337,74 @@ impl HlirBuilder {
 
     fn typeproto_to_type(
         &self,
-        ty: &ast::TypeProto,
+        ty: &ast::Spanned<ast::TypeProto>,
         generics: &[Generic],
+        module: &Module,
         unknown_is_unit: bool,
     ) -> TypeId {
         let type_store = &self.hlir.types;
-        match ty {
+        let span_it = |s: ast::Span| Span(module.file, s.start, s.end);
+        let source_span = span_it(ty.1.clone());
+        match &ty.0 {
             TypeProto::Function {
                 arguments,
                 return_ty,
                 effects,
-            } => type_store.insert(Type::Function {
-                inputs: arguments
-                    .iter()
-                    .map(|x| self.typeproto_to_type(x, generics, unknown_is_unit))
-                    .collect(),
-                output: self.typeproto_to_type(return_ty, generics, unknown_is_unit),
-                effects: EffectSet::Unsolved {
-                    names: effects.effects.clone(),
-                    open: false,
+            } => type_store.insert(
+                Type::Function {
+                    inputs: arguments
+                        .iter()
+                        .map(|x| self.typeproto_to_type(x, generics, module, unknown_is_unit))
+                        .collect(),
+                    output: self.typeproto_to_type(return_ty, generics, module, unknown_is_unit),
+                    effects: EffectSet::Unsolved {
+                        names: effects.effects.clone(),
+                        open: false,
+                    },
                 },
-            }),
+                source_span,
+            ),
             TypeProto::Name(key) => match generics.iter().position(|x| x.name == *key) {
-                Some(x) => type_store.insert(Type::Parameter(x as u32)),
-                None => type_store.insert(Type::Name(*key)),
+                Some(x) => type_store.insert(Type::Parameter(x as u32), source_span),
+                None => type_store.insert(Type::Name(*key), source_span),
             },
-            TypeProto::Unknown if unknown_is_unit => type_store.unit(),
-            TypeProto::Unknown => self.unknown_type(),
+            TypeProto::Unknown if unknown_is_unit => type_store.unit(source_span),
+            TypeProto::Unknown => self.unknown_type(source_span),
         }
     }
 
     fn read_top_level_function(
         &mut self,
         def: ast::FnDef,
+        span: Span,
         module: &mut Module,
     ) -> Result<(), HlirBuildError> {
+        let header_span = Span(module.file, def.header_span.start, def.header_span.end);
         let arguments: Vec<_> = def
             .args
             .into_iter()
             .map(|x| FnArgument {
                 name: x.name,
-                ty: self.typeproto_to_type(&x.ty, &def.generics, false),
+                ty: self.typeproto_to_type(&x.ty, &def.generics, module, false),
             })
             .collect();
-        let output = self.typeproto_to_type(&def.return_ty, &def.generics, true);
-        let mut ty = self.hlir.types.insert(Type::Function {
-            inputs: arguments.iter().map(|x| x.ty).collect(),
-            output,
-            effects: EffectSet::Unsolved {
-                names: def.effects.effects,
-                open: false,
+        let output = self.typeproto_to_type(&def.return_ty, &def.generics, module, true);
+        let mut ty = self.hlir.types.insert(
+            Type::Function {
+                inputs: arguments.iter().map(|x| x.ty).collect(),
+                output,
+                effects: EffectSet::Unsolved {
+                    names: def.effects.effects,
+                    open: false,
+                },
             },
-        });
+            header_span,
+        );
         for (id, _generic) in def.generics.iter().enumerate().rev() {
-            ty = self.hlir.types.insert(Type::Forall(id as u32, ty));
+            ty = self
+                .hlir
+                .types
+                .insert(Type::Forall(id as u32, ty), header_span);
         }
 
         let header = FnHeader {
@@ -402,10 +436,11 @@ impl HlirBuilder {
 
         let nodes = self.fold_nodes(module, nodes)?;
 
+        let source_span = Span(module.file, span.start, span.end);
         let node = Node {
             kind: NodeKind::Block(nodes),
-            ty: self.hlir.types.unit(),
-            source_span: Span(module.file, span.start, span.end),
+            ty: self.hlir.types.unit(source_span),
+            source_span,
         };
 
         Ok(node)
@@ -455,9 +490,11 @@ impl HlirBuilder {
         module: &mut Module,
         ast::Spanned(node, span): ast::Spanned<ast::RawNode>,
     ) -> Result<Node, HlirBuildError> {
+        let source_span = Span(module.file, span.start, span.end);
+
         let kind = match node {
             ast::RawNode::Effect(_) => todo!(),
-            ast::RawNode::Handle(hdl) => self.read_handle_expr(hdl, module)?,
+            ast::RawNode::Handle(hdl) => self.read_handle_expr(hdl, source_span, module)?,
             ast::RawNode::FnDef(_) => todo!(),
             ast::RawNode::Call(call) => NodeKind::Call {
                 callee: self.read_node(module, *call.callee)?.into(),
@@ -490,6 +527,7 @@ impl HlirBuilder {
             },
             ast::RawNode::Let(letd) => NodeKind::Let {
                 name: letd.name.0,
+                name_span: Span(module.file, letd.name.1.start, letd.name.1.end),
                 value: self.read_node(module, *letd.value)?.into(),
                 expr: self.unit_node().into(),
             },
@@ -505,9 +543,9 @@ impl HlirBuilder {
             ),
             ast::RawNode::ApplyType { name, ty } => NodeKind::ApplyType {
                 expr: self
-                    .read_node(module, Spanned(ast::RawNode::Name(name), span.clone()))?
+                    .read_node(module, ast::Spanned(ast::RawNode::Name(name), span.clone()))?
                     .into(),
-                ty: self.hlir.types.insert(Type::Name(ty)),
+                ty: self.hlir.types.insert(Type::Name(ty), source_span),
             },
         };
 
@@ -518,20 +556,21 @@ impl HlirBuilder {
             | NodeKind::If { .. }
             | NodeKind::While { .. }
             | NodeKind::Block(_)
-            | NodeKind::Return(_) => self.hlir.types.unit(),
-            _ => self.unknown_type(),
+            | NodeKind::Return(_) => self.hlir.types.unit(source_span),
+            _ => self.unknown_type(source_span),
         };
 
         Ok(Node {
             kind,
             ty,
-            source_span: Span(module.file, span.start, span.end),
+            source_span,
         })
     }
 
     fn read_handle_expr(
         &mut self,
         hdl: ast::Handle,
+        span: Span,
         module: &mut Module,
     ) -> Result<NodeKind, HlirBuildError> {
         let handlers = hdl
@@ -543,7 +582,7 @@ impl HlirBuilder {
                     name: x.name,
                     arguments: x.args.into_iter().map(|x| x.name).collect(),
                     body: self.read_block(module, x.body)?,
-                    ty: self.unknown_type(),
+                    ty: self.unknown_type(span),
                 })
             })
             .collect::<Result<_, _>>()?;
@@ -555,15 +594,15 @@ impl HlirBuilder {
         })
     }
 
-    fn unknown_type(&self) -> TypeId {
-        self.hlir.types.unknown_type()
+    fn unknown_type(&self, span: Span) -> TypeId {
+        self.hlir.types.unknown_type(span)
     }
 
     fn unit_node(&self) -> Node {
         Node {
             kind: NodeKind::Block(vec![]),
-            ty: self.hlir.types.insert(Type::Unit),
-            source_span: Span(FileId(usize::MAX), 0, 0),
+            ty: self.hlir.types.insert(Type::Unit, Span::default()),
+            source_span: Span(FileId(Spur::default()), 0, 0),
         }
     }
 }

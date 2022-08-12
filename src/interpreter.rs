@@ -15,6 +15,7 @@ use crate::{
     hlir::{
         name_resolve::NameResolver, simplify::Simplifier, visitor::HlirVisitor, FileId, HlirBuilder,
     },
+    intern::INTERNER,
     interpreter::standard::{load_standard_builtins, StandardPorts},
     lexer::{LexError, Lexer, Token},
     parser::parse_tokens,
@@ -98,7 +99,9 @@ impl<P: Ports> Interpreter<P> {
         let ast = parse_tokens(tokens)?;
 
         let mut builder = HlirBuilder::default();
-        builder.read_module(FileId(0), ast).unwrap();
+        builder
+            .read_module(FileId(INTERNER.get_or_intern_static("<main>")), ast)
+            .unwrap();
         builder.load_builtins(|l| load_standard_builtins::<StandardPorts>(l));
         let mut hlir = builder.hlir;
 

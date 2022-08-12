@@ -15,6 +15,7 @@ unindent = "*"
 once_cell = "*"
 tinyvec = { version = "*", features = ["alloc"] }
 dbg-pls = { version = "*", features = ["derive", "pretty"] }
+codespan-reporting = "*"
 
 [dev-dependencies]
 pretty_assertions = "*"

@@ -35,9 +35,9 @@ pub struct EffectType {
 pub enum TypeProto {
     Name(Spur),
     Function {
-        arguments: Vec<TypeProto>,
+        arguments: Vec<Spanned<TypeProto>>,
         effects: EffectType,
-        return_ty: Box<TypeProto>,
+        return_ty: Box<Spanned<TypeProto>>,
     },
     Unknown,
 }
@@ -45,7 +45,7 @@ pub enum TypeProto {
 #[derive(Debug, PartialEq)]
 pub struct Argument {
     pub name: Spur,
-    pub ty: TypeProto,
+    pub ty: Spanned<TypeProto>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -59,7 +59,8 @@ pub struct FnDef {
     pub generics: Vec<Generic>,
     pub args: Vec<Argument>,
     pub effects: EffectType,
-    pub return_ty: TypeProto,
+    pub return_ty: Spanned<TypeProto>,
+    pub header_span: Span,
     pub body: Spanned<Block>,
 }
 
@@ -74,13 +75,13 @@ pub struct EffectDef {
     pub name: Spur,
     pub kind: EffectKind,
     pub args: Vec<Argument>,
-    pub return_ty: TypeProto,
+    pub return_ty: Spanned<TypeProto>,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct EffectGroup {
     pub name: Spur,
-    pub effects: Vec<EffectDef>,
+    pub effects: Vec<Spanned<EffectDef>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -127,7 +128,7 @@ pub struct Let {
 pub struct EffectHandler {
     pub name: Spur,
     pub args: Vec<Argument>,
-    pub return_ty: TypeProto,
+    pub return_ty: Spanned<TypeProto>,
     pub body: Spanned<Block>,
 }
 
@@ -237,31 +238,38 @@ fn block(
 }
 
 fn effect_group() -> impl MParser<Node> {
-    let ty = ty();
-
     let argument = ident()
-        .then(just(Token::Colon).ignore_then(ty.clone()).or_not())
-        .map(|(name, ty)| Argument {
-            name,
-            ty: ty.into(),
-        });
+        .then(
+            just(Token::Colon)
+                .ignore_then(ty())
+                .or_not()
+                .map(Into::into)
+                .map_with_span(Spanned),
+        )
+        .map(|(name, ty)| Argument { name, ty });
 
     let kind = select! {
         Token::Fn => EffectKind::Function,
         Token::Ctl => EffectKind::Control,
     };
-
     let effect = kind
         .then(ident())
         .then(list_of(argument))
-        .then(just(Token::RightArrow).ignore_then(ty).or_not())
+        .then(
+            just(Token::RightArrow)
+                .ignore_then(ty())
+                .or_not()
+                .map(Into::into)
+                .map_with_span(Spanned),
+        )
         .then_ignore(just(Token::Semicolon))
         .map(|(((kind, name), args), return_ty)| EffectDef {
             name,
             kind,
             args,
-            return_ty: return_ty.into(),
-        });
+            return_ty,
+        })
+        .map_with_span(Spanned);
 
     let group = parenthesized(Delim::Curly, effect.repeated());
 
@@ -276,23 +284,30 @@ fn handle_def(
     block_expression: impl MParser<Node>,
     expression: impl MParser<Node>,
 ) -> impl MParser<Node> {
-    let ty = ty();
-
     let argument = ident()
-        .then(just(Token::Colon).ignore_then(ty.clone()).or_not())
-        .map(|(name, ty)| Argument {
-            name,
-            ty: ty.into(),
-        });
+        .then(
+            just(Token::Colon)
+                .ignore_then(ty())
+                .or_not()
+                .map(Into::into)
+                .map_with_span(Spanned),
+        )
+        .map(|(name, ty)| Argument { name, ty });
 
     let effect = ident()
         .then(list_of(argument))
-        .then(just(Token::RightArrow).ignore_then(ty).or_not())
+        .then(
+            just(Token::RightArrow)
+                .ignore_then(ty())
+                .or_not()
+                .map(Into::into)
+                .map_with_span(Spanned),
+        )
         .then(block(block_expression.clone(), expression.clone()))
         .map(|(((name, args), return_ty), body)| EffectHandler {
             name,
             args,
-            return_ty: return_ty.into(),
+            return_ty,
             body,
         });
 
@@ -327,9 +342,9 @@ fn effect_ty() -> impl MParser<EffectType> {
 
 fn ty() -> impl MParser<TypeProto> {
     let ty = recursive(|ty| {
-        let func = list_of(ty.clone())
+        let func = list_of(ty.clone().map_with_span(Spanned))
             .then_ignore(just(Token::RightArrow))
-            .then(ty.clone().map(Box::new))
+            .then(ty.clone().map_with_span(Spanned).map(Box::new))
             .then(effect_ty())
             .map(|((arguments, return_ty), effects)| TypeProto::Function {
                 arguments,
@@ -346,14 +361,15 @@ fn fn_def(
     block_expression: impl MParser<Node>,
     expression: impl MParser<Node>,
 ) -> impl MParser<Node> {
-    let ty = ty();
-
     let argument = ident()
-        .then(just(Token::Colon).ignore_then(ty.clone()).or_not())
-        .map(|(name, ty)| Argument {
-            name,
-            ty: ty.into(),
-        });
+        .then(
+            just(Token::Colon)
+                .ignore_then(ty())
+                .or_not()
+                .map(Into::into)
+                .map_with_span(Spanned),
+        )
+        .map(|(name, ty)| Argument { name, ty });
 
     let generics = ident()
         .map(|name| Generic { name })
@@ -364,19 +380,29 @@ fn fn_def(
         .ignore_then(ident().or_not())
         .then(generics.or_not())
         .then(list_of(argument))
-        .then(just(Token::RightArrow).ignore_then(ty).or_not())
+        .then(
+            just(Token::RightArrow)
+                .ignore_then(ty())
+                .or_not()
+                .map(Into::into)
+                .map_with_span(Spanned),
+        )
         .then(effect_ty())
+        .map_with_span(|x, s| (x, s))
         .then(block(block_expression, expression))
-        .map(|(((((name, generics), args), return_ty), effects), body)| {
-            RawNode::FnDef(FnDef {
-                name,
-                generics: generics.unwrap_or_else(Vec::new),
-                args,
-                effects,
-                return_ty: return_ty.into(),
-                body,
-            })
-        })
+        .map(
+            |((((((name, generics), args), return_ty), effects), header_span), body)| {
+                RawNode::FnDef(FnDef {
+                    name,
+                    generics: generics.unwrap_or_else(Vec::new),
+                    args,
+                    effects,
+                    return_ty,
+                    header_span,
+                    body,
+                })
+            },
+        )
         .map_with_span(Spanned)
 }
 
